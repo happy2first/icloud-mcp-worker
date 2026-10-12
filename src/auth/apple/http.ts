@@ -505,28 +505,34 @@ export class AppleAuthHTTP {
     for (const key of ["ckdatabasews", "drivews", "docws"] as const) {
       const value = object(ws?.[key])?.url;
       if (typeof value === "string") {
-        const url = new URL(value);
-        if (url.pathname !== "/" || url.search || url.hash)
-          throw new AppError("PROTOCOL_CHANGED", "Unsupported service root.");
-        // Validate each service independently, including services not currently enabled.
-        const pattern =
-          key === "ckdatabasews"
-            ? /^p\d{1,3}-ckdatabasews\.icloud\.com$/
-            : key === "drivews"
-              ? /^p\d{1,3}-drivews\.icloud\.com$/
-              : /^p\d{1,3}-docws\.icloud\.com$/;
-        if (
-          url.protocol !== "https:" ||
-          url.username ||
-          url.password ||
-          url.port ||
-          !pattern.test(url.hostname)
-        )
-          throw new AppError(
-            "PROTOCOL_CHANGED",
-            "Unsupported Apple service host.",
-          );
-        services[key] = url.origin;
+        try {
+          const url = new URL(value);
+          if (url.pathname !== "/" || url.search || url.hash)
+            throw new AppError("PROTOCOL_CHANGED", "Unsupported service root.");
+          // Validate each service independently, including services not currently enabled.
+          const pattern =
+            key === "ckdatabasews"
+              ? /^p\d{1,3}-ckdatabasews\.icloud\.com$/
+              : key === "drivews"
+                ? /^p\d{1,3}-drivews\.icloud\.com$/
+                : /^p\d{1,3}-docws\.icloud\.com$/;
+          if (
+            url.protocol !== "https:" ||
+            url.username ||
+            url.password ||
+            url.port ||
+            !pattern.test(url.hostname)
+          )
+            throw new AppError(
+              "PROTOCOL_CHANGED",
+              "Unsupported Apple service host.",
+            );
+          services[key] = url.origin;
+        } catch (error) {
+          // Reject unsupported optional roots for that service without losing a
+          // valid account/CloudKit login. Requests never use the rejected root.
+          if (key === "ckdatabasews") throw error;
+        }
       }
     }
     return services;

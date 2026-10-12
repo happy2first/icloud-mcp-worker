@@ -21,9 +21,13 @@ No delete, authentication, credential-entry, or PCS tools are exposed through MC
 
 ## Authentication
 
+The Chinese management UI now uses mobile-first service cards and matching login styles. See the [detailed deployment/credential guide](docs/USER-GUIDE.md) and [latest authentication/UI review](docs/AUTH-AND-UI-REVIEW.md). DOM interaction tests pass; iPhone Safari and screenshot/layout verification remain pending.
+
 The management flow uses `/admin` and its isolated `/connect/apple` credential document. The primary password is used for SRP proofs in the browser only; the Worker receives authentication proofs. Modern trusted-device SPAKE2 verification is reused from Xzese; SMS/phone/legacy code and hardware security keys are unsupported, without fallback.
 
 The web session is shared by Reminders, Notes, Photos, and Drive. Separate PCS state is stored for `reminders`, `notes3`, `photos`, and `iclouddrive`. Each approval check makes at most two requests and returns pending state without sleeping. Saved cookies/tokens are validated and may be recovered through one bounded token exchange. The absolute local retention window is 30 days; Apple may revoke access earlier. Primary passwords are never saved or used for background login.
+
+Verified account credentials are persisted before service PCS requests. Authorize each service from its card after returning from login; Reminders approval failure does not discard a verified account login. Actions are serialized and show persisted PCS cooldowns. Disabling a service clears its write permission. App-specific password paste supports spaces/hyphens or 16 lowercase letters; stored credentials must still pass separate live DAV checks.
 
 Calendar and Contacts use an app-specific password entered in the management page. Both credential classes are AES-256-GCM encrypted in D1 with owner/account/generation/record-bound AAD, random IVs and a Secret-only key ring. Session leases/version fences prevent stale writes; DAV uses ETag/If-Match and deterministic UUID/If-None-Match creation. Service-specific endpoint allowlists reject arbitrary Apple APIs and non-Apple hosts.
 

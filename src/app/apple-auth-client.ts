@@ -10,7 +10,7 @@ export type BrowserSignInUpdate =
   | { state: "working"; message: string }
   | { state: "code"; method: string }
   | { state: "complete"; result: Extract<AuthEvent, { type: "complete" }> }
-  | { state: "failed"; message: string };
+  | { state: "failed"; message: string; code?: string };
 export function beginAppleSignIn(
   accountName: string,
   initialPassword: string,
@@ -64,11 +64,11 @@ export function beginAppleSignIn(
     clearTimeout(timer);
   };
   const live = () => phase !== "closed" && socket.readyState === WebSocket.OPEN;
-  const fail = (message: string) => {
+  const fail = (message: string, code?: string) => {
     if (phase === "closed") return;
     clean();
     socket.close();
-    update({ state: "failed", message });
+    update({ state: "failed", message, ...(code ? { code } : {}) });
   };
   const send = (type: string, data: Record<string, unknown>) => {
     if (!live() || !binding)
@@ -107,7 +107,10 @@ export function beginAppleSignIn(
           "The sign-in response was out of order. Restart sign-in.",
         );
       const value = events.consume(JSON.parse(event.data));
-      if (value.type === "failed") throw new Error(value.error.message);
+      if (value.type === "failed")
+        throw Object.assign(new Error(value.error.message), {
+          code: value.error.code,
+        });
       busy = true;
       try {
         if (value.type === "hello" && phase === "hello") {
@@ -199,6 +202,12 @@ export function beginAppleSignIn(
         error instanceof Error
           ? error.message
           : "Sign-in could not be completed.",
+        error &&
+          typeof error === "object" &&
+          "code" in error &&
+          typeof error.code === "string"
+          ? error.code
+          : undefined,
       ),
     );
   });

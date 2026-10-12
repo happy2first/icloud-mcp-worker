@@ -1056,7 +1056,9 @@ export class CloudKitRemindersClient {
       const retry =
         retryText && /^\d+(?:\.\d+)?$/.test(retryText)
           ? Number(retryText)
-          : null;
+          : retryText && Number.isFinite(Date.parse(retryText))
+            ? Math.max(0, (Date.parse(retryText) - Date.now()) / 1000)
+            : null;
       throw new CloudKitRateLimitedError(
         retry !== null && Number.isFinite(retry) ? retry : null,
       );

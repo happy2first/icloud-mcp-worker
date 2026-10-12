@@ -166,6 +166,20 @@ try {
     return r.json();
   };
   const tools = await mcp("tools/list", {});
+  for (const name of [
+    "calendar_delete",
+    "contacts_delete",
+    "delete_reminder",
+    "notes_delete",
+    "photos_delete",
+    "drive_delete",
+  ]) {
+    const rejected = await mcp("tools/call", { name, arguments: {} });
+    assert.ok(
+      rejected.error || rejected.result?.isError,
+      "Unregistered delete tool must reject: " + name,
+    );
+  }
   assert.ok(tools.result.tools.length >= 25);
   assert.ok(
     tools.result.tools.every(
@@ -273,7 +287,29 @@ try {
       },
       pcs: freshPcsCheckpoint(),
     },
-    "READY",
+    "DEVICE_APPROVAL_PENDING",
+    "approve-device-consent",
+  );
+  const independentStatus = await (await request("/api/admin/status")).json();
+  assert.equal(independentStatus.webSessionAvailable, true);
+  assert.equal(
+    independentStatus.services.find((s) => s.service === "reminders").pcsReady,
+    false,
+  );
+  assert.equal(
+    independentStatus.services.find((s) => s.service === "photos")
+      .credentialAvailable,
+    true,
+  );
+  assert.equal(
+    (
+      await request("/api/admin/service", {
+        service: "calendar",
+        enabled: false,
+        writable: true,
+      })
+    ).status,
+    422,
   );
   await request("/api/admin/service", {
     service: "photos",

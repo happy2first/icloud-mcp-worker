@@ -13,9 +13,19 @@ export const ServiceName = z.enum([
 export type ServiceName = z.infer<typeof ServiceName>;
 export const CredentialInput = z
   .object({
-    account: z.string().email().max(320),
-    password: z.string().regex(/^[a-z]{4}(-[a-z]{4}){3}$/),
-    expectedVersion: z.number().int().nonnegative(),
+    account: z.string().trim().email().max(320),
+    password: z
+      .string()
+      .max(100)
+      .transform((v) => v.replace(/[\s-]/g, ""))
+      .pipe(z.string().regex(/^[a-z]{16}$/))
+      .transform((v) => v.match(/.{4}/g)!.join("-")),
+    expectedVersion: z
+      .number()
+      .int()
+      .nonnegative()
+      .safe()
+      .max(Number.MAX_SAFE_INTEGER - 1),
   })
   .strict();
 export function db(env: RuntimeEnv) {

@@ -357,8 +357,26 @@ function updateResolutionTokenMap(
 ): string {
   const map = existingResolutionMap(current);
   const modificationTime = nowMs / 1000 - APPLE_EPOCH_SECONDS;
-  for (const fieldName of fieldNames)
-    map[fieldName] = newResolutionToken(modificationTime);
+  // Latest Xzese keeps the replica identity and advances the existing counter.
+  // Replacing it with a new counter=1 token can lose the native merge lineage.
+  for (const fieldName of new Set(fieldNames)) {
+    const existing = map[fieldName] as
+      | { counter: number; modificationTime: number; replicaID: string }
+      | undefined;
+    if (!existing) map[fieldName] = newResolutionToken(modificationTime);
+    else {
+      if (!Number.isSafeInteger(existing.counter + 1))
+        throw new AppError(
+          "PROTOCOL_CHANGED",
+          "The existing resolution counter cannot be advanced safely.",
+        );
+      map[fieldName] = {
+        ...existing,
+        counter: existing.counter + 1,
+        modificationTime: Math.max(modificationTime, existing.modificationTime),
+      };
+    }
+  }
   const encoded = JSON.stringify({ map });
   if (
     Object.keys(map).length > 512 ||
@@ -566,10 +584,24 @@ export function buildUpdateReminder(
   }
   // Apple can retain AllDay=1 on an undated reminder. Preserve that existing
   // state for unrelated edits; validate dependencies when changing date fields.
+  const nativeAllDay =
+    reminder.allDay === true &&
+    nextAllDay &&
+    nextZone === null &&
+    changes.timeZone === undefined &&
+    nextDue !== null;
+  if (nativeAllDay && changes.dueDate !== undefined)
+    requireValue(
+      changes.dueDate !== null &&
+        changes.dueDate.endsWith("Z") &&
+        Date.parse(changes.dueDate) % 86400000 === 0,
+      "An all-day date without a stored zone requires an explicit midnight-UTC calendar date.",
+    );
   if (
-    changes.dueDate !== undefined ||
-    changes.timeZone !== undefined ||
-    changes.allDay !== undefined
+    !nativeAllDay &&
+    (changes.dueDate !== undefined ||
+      changes.timeZone !== undefined ||
+      changes.allDay !== undefined)
   )
     requireAllDayValues(nextAllDay, nextDue, nextZone);
 
@@ -579,7 +611,8 @@ export function buildUpdateReminder(
   if (
     (dateChanged || zoneChanged || allDayChanged) &&
     ((reminder.recurrenceRuleIds?.length ?? 0) > 0 ||
-      (reminder.alarmIds?.length ?? 0) > 0)
+      (reminder.alarmIds?.length ?? 0) > 0 ||
+      Object.hasOwn(current.fields, "DueDateDeltaAlertsData"))
   ) {
     throw new AppError(
       "UNSUPPORTED_FEATURE",

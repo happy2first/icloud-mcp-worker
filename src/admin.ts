@@ -1,26 +1,25 @@
-export function adminPage() {
+import { pageStyles } from "./ui/styles.ts";
+export function adminPage(adminScript = "") {
   const nonce = btoa(
     String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24))),
   );
   return new Response(
-    `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>iCloud 管理</title><style nonce="${nonce}">body{font:16px/1.6 system-ui;background:#f4f6fb;color:#18243b;margin:0}main{max-width:900px;margin:32px auto;padding:24px}section{background:white;padding:24px;margin:20px 0;border:1px solid #ddd;border-radius:16px}input,button{font:inherit;padding:8px;margin:6px}label{display:block}button,a{color:#135bc4}pre{white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;text-align:left}</style><main><h1>iCloud MCP 管理</h1><p>六项服务独立开关。凭证只在此页面录入，切勿放入聊天。状态来自已保存会话，实际可用性需逐项检查。</p><section><h2>网页会话</h2><a href="/connect/apple">登录 Apple 账户并完成设备验证</a><button id="resume">检查提醒事项 PCS 授权</button><button id="disconnect">断开网页会话</button><p>备忘录、照片、云盘使用同一会话，各自需要 PCS 授权。主密码在浏览器中计算证明，不保存。</p><div id="pcs"></div></section><section><h2>日历 / 通讯录专用密码</h2><form id="dav"><label>Apple 账户 <input id="account" type="email" autocomplete="username" required></label><label>App 专用密码 <input id="password" type="password" autocomplete="off" pattern="[a-z]{4}(-[a-z]{4}){3}" required></label><button>加密保存</button></form><button id="remove">移除专用密码</button></section><section><h2>服务权限</h2><table><thead><tr><th>服务</th><th>启用</th><th>允许写入</th><th>联调</th></tr></thead><tbody id="services"></tbody></table><p>备忘录、照片和云盘只读；删除工具未公开。</p></section><section><h2>状态</h2><button id="refresh">刷新</button><pre id="status" role="status"></pre></section></main><script nonce="${nonce}">
-const byId=id=>document.getElementById(id);let current;
-async function api(path,value){const r=await fetch(path,value===undefined?{cache:'no-store'}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)});const data=await r.json();if(!r.ok)throw new Error(JSON.stringify(data));return data;}
-function error(e){byId('status').textContent=e.message;}
-async function refresh(){current=await api('/api/admin/status');byId('status').textContent=JSON.stringify(current,null,2);const tbody=byId('services');tbody.replaceChildren();for(const item of current.services){const tr=document.createElement('tr');const label=document.createElement('td');label.textContent=item.service;tr.append(label);for(const key of ['enabled','writable']){const td=document.createElement('td'),input=document.createElement('input');input.type='checkbox';input.checked=item[key];input.disabled=key==='writable'&&['notes','photos','drive'].includes(item.service);input.onchange=async()=>{try{await api('/api/admin/service',{service:item.service,enabled:key==='enabled'?input.checked:item.enabled,writable:key==='writable'?input.checked:item.writable});await refresh();}catch(e){error(e);}};td.append(input);tr.append(td);}const td=document.createElement('td'),button=document.createElement('button');button.textContent='检查';button.onclick=async()=>{try{const data=await api('/api/admin/check',{service:item.service});byId('status').textContent=JSON.stringify(data,null,2);}catch(e){error(e);}};td.append(button);tr.append(td);tbody.append(tr);}}
-byId('dav').onsubmit=async e=>{e.preventDefault();let password=byId('password').value;byId('password').value='';try{await api('/api/admin/credentials',{account:byId('account').value,password,expectedVersion:current.dav.version});password='';await refresh();}catch(e){error(e);}finally{password='';}};
-byId('remove').onclick=()=>{if(current?.dav.configured&&confirm('移除日历和通讯录专用密码？'))api('/api/admin/remove-credentials',{expectedVersion:current.dav.version}).then(refresh).catch(error);};
-byId('refresh').onclick=()=>refresh().catch(error);
-byId('disconnect').onclick=()=>api('/api/auth/disconnect',{}).then(refresh).catch(error);
-byId('resume').onclick=()=>api('/api/auth/resume',{expectedGeneration:current.web.generation,restartApproval:true}).then(refresh).catch(error);
-for(const service of ['notes3','photos','iclouddrive']){const button=document.createElement('button');button.textContent='申请 / 检查 '+service+' PCS';button.onclick=()=>api('/api/admin/pcs',{service}).then(refresh).catch(error);byId('pcs').append(button);}
-refresh().catch(error);
-</script></html>`,
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>iCloud MCP 管理</title><style nonce="${nonce}">${pageStyles}</style></head><body><main>
+<h1>iCloud MCP 管理</h1><p>先配置凭证，再开启服务并逐项检查。Apple 主密码与 App 专用密码用途不同，请勿在聊天中提供。</p>
+<div id="notice" class="message" role="status" aria-live="polite" tabindex="-1">正在读取配置…</div>
+<section><h2>1. 网页会话</h2><p>供提醒事项、备忘录、照片和云盘共用。</p><p id="web-state">正在读取…</p><p id="expiry" class="muted"></p><div class="actions"><a class="button" id="connect" href="/connect/apple">登录 Apple 账户</a><button id="disconnect" class="danger" disabled>断开网页会话</button></div><p><small>登录成功后仍需在下方逐项申请 PCS 数据授权。会话保存不代表 Apple 接口已验证。</small></p></section>
+<section><h2>2. 日历 / 通讯录凭证</h2><p>使用 Apple 生成的 App 专用密码，不是账户主密码。</p><p id="dav-state">正在读取…</p><form id="dav"><fieldset id="dav-fields" disabled><label for="account">Apple 账户邮箱</label><input id="account" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="320" required><label for="password">App 专用密码</label><input id="password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" placeholder="xxxx-xxxx-xxxx-xxxx" aria-describedby="password-help" required><p id="password-help"><small>支持粘贴 16 位字母，自动整理空格和连字符。保存后输入框清空，不回显密码。</small></p><div class="actions"><button id="save" type="submit">加密保存</button></div></fieldset></form><div class="actions"><a class="button secondary" href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">前往 Apple 生成专用密码</a><button id="remove" class="danger" disabled>移除本地专用密码</button></div><p><small>在 Apple 账户 → 登录与安全 → App 专用密码中生成。此处移除只清除 Worker 保存的凭证；撤销需在 Apple 网站操作。</small></p></section>
+<section><h2>3. 服务权限与检查</h2><p>逐项启用。写入默认关闭；所有删除工具均未公开。每次只进行一项操作，避免授权请求冲突。</p><div id="services" aria-busy="true"></div></section>
+<section><h2>4. 连接 ChatGPT</h2><label for="mcp-url">MCP 地址</label><input id="mcp-url" readonly aria-label="MCP 地址"><p>将此地址加入支持远程 MCP 的 ChatGPT 客户端，通过 Cloudflare Access 授权。先调用 icloud_status，再逐项读取。</p></section>
+<section><h2>配置状态</h2><button id="refresh" class="secondary">刷新状态</button><details><summary>查看技术状态（不含凭证）</summary><pre id="status"></pre></details></section>
+<noscript><p>请启用 JavaScript 后再配置。未启用时不会提交密码。</p></noscript></main><script nonce="${nonce}">${adminScript}</script></body></html>`,
     {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
+        "permissions-policy": "camera=(), microphone=(), geolocation=()",
         "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'`,
       },
     },

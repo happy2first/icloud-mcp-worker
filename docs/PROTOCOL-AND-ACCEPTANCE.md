@@ -49,5 +49,6 @@ Use an operator's controlled Apple account. Do not store actual note/contact/cal
 8. Photos: paginate personal metadata; compare one CPLAsset/CPLMaster pair to Apple UI; inspect thumbnail and one original download. Confirm HTTP stream and MCP resource-read limits, owner isolation, ticket expiry and disconnect revocation.
 9. Drive: browse a small test folder, search within it and download one document. Confirm the request reaches DriveWS/DocWS, not CloudKit records.
 10. Connect ChatGPT through Managed OAuth; discover tools and make one read per service. With write permissions off, all write tools must reject requests. Record each service/operation/time as passed or failed; a successful management “check” alone does not certify every operation.
+11. On actual iPhone Safari, verify 320/390/430px reflow, zoom, tap labels/buttons, error/status visibility, password-manager behavior and numeric OTP entry. Finish one trusted-device login from that phone; test network/background interruption, recovery and the separate PCS buttons. DOM tests alone do not satisfy this step.
 
 No real Apple account or production environment was available during initial development. The checklist remains pending and is not an assertion of success.

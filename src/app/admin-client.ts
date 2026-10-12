@@ -1,0 +1,396 @@
+type Service = {
+  service: string;
+  enabled: boolean;
+  writable: boolean;
+  credentialAvailable: boolean;
+  pcsReady: boolean | null;
+};
+type Status = {
+  web: {
+    generation: number;
+    state: string;
+    expiresAt?: number;
+    gates: { enabled: boolean };
+  };
+  webSessionAvailable: boolean;
+  dav: { configured: boolean; version: number };
+  services: Service[];
+  pcsProgress?: Record<
+    string,
+    { nextAttemptAt: number; expiresAt: number; exhausted: boolean }
+  >;
+};
+export function mountAdmin(
+  doc: Document,
+  send: typeof fetch = fetch,
+  confirmAction: (message: string) => boolean = (message) =>
+    window.confirm(message),
+) {
+  const el = <T extends HTMLElement>(id: string) => doc.getElementById(id) as T;
+  const names: Record<string, string> = {
+    calendar: "日历",
+    contacts: "通讯录",
+    reminders: "提醒事项",
+    notes: "备忘录",
+    photos: "照片",
+    drive: "iCloud 云盘",
+  };
+  const pcs: Record<string, string> = {
+    reminders: "reminders",
+    notes: "notes3",
+    photos: "photos",
+    drive: "iclouddrive",
+  };
+  const hints: Record<string, string> = {
+    NOT_CONNECTED: "请先配置对应凭证。",
+    REAUTH_REQUIRED: "Apple 拒绝了凭证，请重新登录或更换 App 专用密码。",
+    DEVICE_APPROVAL_PENDING: "请在可信设备上批准，然后再次检查对应服务的 PCS。",
+    VERIFICATION_REQUIRED: "请重新登录并完成可信设备验证。",
+    CONFLICT: "配置已变化，请刷新状态后再操作。",
+    RATE_LIMITED: "请等待倒计时或稍后再试，勿连续点击。",
+    SESSION_EXPIRED: "Access 登录可能已过期，请重新打开此管理页登录。",
+    FORBIDDEN: "此操作未授权，请检查服务与写权限或 Apple 网页访问设置。",
+    UNSUPPORTED_FEATURE: "当前协议不支持此服务或资源，请查看项目支持范围。",
+    PROTOCOL_CHANGED:
+      "Apple 接口返回未支持的协议，请记录错误代码并检查项目更新。",
+    CONFIGURATION_REQUIRED: "请先完成 D1、域名与 Workers Secrets 配置。",
+    OWNER_NOT_CONFIGURED: "管理员尚未配置 Access 身份与应用域名。",
+    UNSUPPORTED_AUTH:
+      "Apple 登录未启用或返回了未支持的验证方式，请检查配置与官方账户状态。",
+    UPSTREAM_UNAVAILABLE: "无法连接 Apple 服务或请求超时，请稍后再试。",
+    AUTH_EXPIRED: "会话已过期，请重新登录。",
+    RESTART_REQUIRED: "本次授权需重试，请刷新状态后操作。",
+  };
+  let current: Status | null = null,
+    busy = false;
+  const checks = new Map<string, string>();
+  function announce(text: string, error = false) {
+    el("notice").textContent = text;
+    el("notice").dataset.error = String(error);
+  }
+  async function api(path: string, value?: unknown) {
+    let r: Response;
+    try {
+      r = await send(path, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(45000),
+        ...(value === undefined
+          ? {}
+          : {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(value),
+            }),
+      });
+    } catch {
+      throw new Error(
+        "请求超时或网络中断。操作结果未确认，请刷新状态检查后再决定是否重试。",
+      );
+    }
+    if (
+      r.redirected ||
+      !(r.headers.get("content-type") ?? "").includes("application/json")
+    )
+      throw new Error("SESSION_EXPIRED：" + hints.SESSION_EXPIRED);
+    const data: any = await r.json();
+    if (!r.ok) {
+      const e = data.error ?? {};
+      throw new Error(
+        (e.code ?? "REQUEST_FAILED") +
+          "：" +
+          (hints[e.code] ?? e.message ?? "操作未完成。") +
+          (typeof e.retryAfterSeconds === "number"
+            ? ` 至少等待 ${Math.ceil(e.retryAfterSeconds)} 秒。`
+            : ""),
+      );
+    }
+    return data;
+  }
+  function controls() {
+    el<HTMLFieldSetElement>("dav-fields").disabled = busy || !current;
+    el<HTMLButtonElement>("refresh").disabled = busy;
+    el<HTMLButtonElement>("remove").disabled = busy || !current?.dav.configured;
+    el<HTMLButtonElement>("disconnect").disabled =
+      busy || !current || current.web.state === "DISCONNECTED";
+    const connect = el<HTMLAnchorElement>("connect");
+    connect.setAttribute(
+      "aria-disabled",
+      String(busy || !current || !current.web.gates.enabled),
+    );
+    for (const input of doc.querySelectorAll<HTMLInputElement>(
+      "#services input",
+    )) {
+      const s = current?.services.find(
+        (s) => s.service === input.dataset.service,
+      );
+      input.disabled =
+        busy || !s || (input.dataset.kind === "writable" && !s.enabled);
+    }
+    for (const button of doc.querySelectorAll<HTMLButtonElement>(
+      "#services button",
+    )) {
+      const s = current?.services.find(
+        (s) => s.service === button.dataset.service,
+      );
+      const p = current?.pcsProgress?.[pcs[button.dataset.service!]];
+      const until = p?.exhausted ? p.expiresAt : (p?.nextAttemptAt ?? 0);
+      const seconds = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      button.disabled =
+        busy ||
+        !s ||
+        (button.dataset.kind === "pcs"
+          ? !current?.webSessionAvailable || seconds > 0
+          : !s.enabled || !s.credentialAvailable);
+      if (button.dataset.kind === "pcs")
+        button.textContent =
+          seconds > 0 ? `等待 ${seconds} 秒后检查` : "申请 / 检查 PCS";
+    }
+  }
+  function render() {
+    if (!current) return;
+    el("web-state").textContent = current.webSessionAvailable
+      ? "网页会话已保存；各服务授权状态见下方。"
+      : current.web.state === "DISCONNECTED"
+        ? "尚未连接 Apple 网页会话。"
+        : "网页会话尚不可用：" + current.web.state;
+    el("expiry").textContent = current.web.expiresAt
+      ? "本地会话最晚到期：" +
+        new Date(current.web.expiresAt).toLocaleString("zh-CN") +
+        "；Apple 可能提前要求验证。"
+      : "";
+    el("dav-state").textContent = current.dav.configured
+      ? "专用密码已加密保存。请分别检查日历与通讯录。"
+      : "尚未保存 App 专用密码。";
+    el("status").textContent = JSON.stringify(current, null, 2);
+    el("services").replaceChildren();
+    el("services").setAttribute("aria-busy", "false");
+    for (const s of current.services) {
+      const card = doc.createElement("article");
+      card.className = "card";
+      card.dataset.service = s.service;
+      const title = doc.createElement("h3");
+      title.textContent = names[s.service];
+      card.appendChild(title);
+      const status = doc.createElement("p");
+      status.className = "service-state";
+      status.textContent =
+        (s.enabled ? "已启用" : "未启用") +
+        " · " +
+        (!s.credentialAvailable
+          ? "缺少可用凭证"
+          : pcs[s.service]
+            ? s.pcsReady
+              ? "PCS 已就绪（保存状态）"
+              : "需要 PCS 授权"
+            : "专用密码已保存");
+      card.appendChild(status);
+      for (const key of ["enabled", "writable"] as const) {
+        if (key === "writable" && pcs[s.service] && s.service !== "reminders")
+          continue;
+        const label = doc.createElement("label");
+        label.className = "toggle";
+        const input = doc.createElement("input");
+        input.type = "checkbox";
+        input.checked = s[key];
+        input.dataset.service = s.service;
+        input.dataset.kind = key;
+        input.setAttribute(
+          "aria-label",
+          names[s.service] + (key === "enabled" ? "启用服务" : "允许写入"),
+        );
+        label.appendChild(input);
+        label.appendChild(
+          doc.createTextNode(key === "enabled" ? "启用服务" : "允许新增与修改"),
+        );
+        card.appendChild(label);
+        input.addEventListener("change", () => {
+          const checked = input.checked;
+          if (busy) {
+            input.checked = s[key];
+            return;
+          }
+          void action(async () => {
+            await api("/api/admin/service", {
+              service: s.service,
+              enabled: key === "enabled" ? checked : s.enabled,
+              writable:
+                key === "enabled" ? (checked ? s.writable : false) : checked,
+            });
+            return names[s.service] + "权限已保存。";
+          });
+        });
+      }
+      if (["notes", "photos", "drive"].includes(s.service)) {
+        const badge = doc.createElement("span");
+        badge.className = "badge";
+        badge.textContent = "只读";
+        card.appendChild(badge);
+      }
+      const actions = doc.createElement("div");
+      actions.className = "actions";
+      if (pcs[s.service]) {
+        const b = doc.createElement("button");
+        b.className = "secondary";
+        b.dataset.service = s.service;
+        b.dataset.kind = "pcs";
+        b.textContent = "申请 / 检查 PCS";
+        b.onclick = () =>
+          void action(async () => {
+            const r = await api(
+              s.service === "reminders" ? "/api/auth/resume" : "/api/admin/pcs",
+              s.service === "reminders"
+                ? {
+                    expectedGeneration: current!.web.generation,
+                    restartApproval: true,
+                  }
+                : { service: pcs[s.service] },
+            );
+            return r.state === "READY"
+              ? names[s.service] + " PCS 授权就绪。现在可以检查服务。"
+              : names[s.service] +
+                  "授权尚未完成。请在可信设备批准，等待按钮倒计时后再次检查。";
+          });
+        actions.appendChild(b);
+      }
+      const check = doc.createElement("button");
+      check.textContent = "检查服务";
+      check.dataset.service = s.service;
+      check.dataset.kind = "check";
+      check.onclick = () =>
+        void action(async () => {
+          const r = await api("/api/admin/check", { service: s.service });
+          checks.set(
+            s.service,
+            "本页只读检查通过：" +
+              new Date(r.checkedAt).toLocaleTimeString("zh-CN"),
+          );
+          return names[s.service] + "只读检查通过；这不代表所有操作均已验收。";
+        });
+      actions.appendChild(check);
+      card.appendChild(actions);
+      if (checks.has(s.service)) {
+        const p = doc.createElement("p");
+        p.className = "service-state";
+        p.textContent = checks.get(s.service)!;
+        card.appendChild(p);
+      }
+      el("services").appendChild(card);
+    }
+    controls();
+  }
+  async function refresh() {
+    current = await api("/api/admin/status");
+    render();
+  }
+  async function action(run: () => Promise<string>) {
+    if (busy) return;
+    busy = true;
+    controls();
+    announce("正在处理，请勿重复操作…");
+    try {
+      const message = await run();
+      try {
+        await refresh();
+        announce(message);
+      } catch (error) {
+        current = null;
+        announce(
+          message +
+            " 但状态刷新失败：" +
+            (error instanceof Error ? error.message : "请刷新页面确认。"),
+          true,
+        );
+      }
+    } catch (e) {
+      try {
+        await refresh();
+      } catch {
+        current = null;
+      }
+      announce(e instanceof Error ? e.message : "操作失败，请刷新状态。", true);
+    } finally {
+      busy = false;
+      controls();
+    }
+  }
+  el("connect").addEventListener("click", (e) => {
+    if (busy || !current?.web.gates.enabled) e.preventDefault();
+    else if (
+      current.webSessionAvailable &&
+      !confirmAction("重新登录会替换已有网页会话和各服务授权。确定继续？")
+    )
+      e.preventDefault();
+  });
+  el<HTMLFormElement>("dav").onsubmit = (e) => {
+    e.preventDefault();
+    if (busy || !current) return;
+    const account = el<HTMLInputElement>("account").value.trim();
+    const raw = el<HTMLInputElement>("password").value;
+    const compact = raw.replace(/[\s-]/g, "");
+    if (!/^[a-z]{16}$/.test(compact)) {
+      announce(
+        "App 专用密码应为 Apple 生成的 16 位小写字母；请勿输入账户主密码。",
+        true,
+      );
+      return;
+    }
+    const version = current.dav.version;
+    el<HTMLInputElement>("password").value = "";
+    void action(async () => {
+      await api("/api/admin/credentials", {
+        account,
+        password: compact,
+        expectedVersion: version,
+      });
+      checks.delete("calendar");
+      checks.delete("contacts");
+      return "专用密码已加密保存，请分别检查日历与通讯录。";
+    });
+  };
+  el("remove").onclick = () => {
+    if (
+      busy ||
+      !current?.dav.configured ||
+      !confirmAction(
+        "移除 Worker 中的日历和通讯录凭证？不会删除 Apple 数据，也不会撤销 Apple 网站上的密码。",
+      )
+    )
+      return;
+    const version = current.dav.version;
+    void action(async () => {
+      await api("/api/admin/remove-credentials", { expectedVersion: version });
+      checks.delete("calendar");
+      checks.delete("contacts");
+      return "本地专用密码已移除。";
+    });
+  };
+  el("disconnect").onclick = () => {
+    if (
+      busy ||
+      !current ||
+      !confirmAction(
+        "断开四项网页服务并撤销下载引用？日历和通讯录的专用密码将保留。",
+      )
+    )
+      return;
+    void action(async () => {
+      await api("/api/auth/disconnect", {});
+      for (const s of Object.keys(pcs)) checks.delete(s);
+      return "网页会话已断开；Apple 数据未删除。";
+    });
+  };
+  el("refresh").onclick = () =>
+    void action(async () => "配置状态已刷新；未请求 Apple 服务。");
+  el<HTMLInputElement>("mcp-url").value = doc.location?.origin + "/mcp";
+  controls();
+  void action(async () => "先配置两类凭证，再逐项启用并检查。");
+  const timer = setInterval(controls, 1000);
+  return {
+    destroy() {
+      clearInterval(timer);
+    },
+    get busy() {
+      return busy;
+    },
+  };
+}

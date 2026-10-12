@@ -47,6 +47,26 @@ const accepted = () => ({
 const code = (expected: string) => (error: unknown) =>
   error instanceof AppError && error.code === expected;
 
+test("unsupported optional Drive endpoints cannot prevent a valid shared CloudKit session", async () => {
+  const http = AppleAuthHTTP.restore(snapshot(), async () =>
+    Response.json({
+      ...accepted(),
+      webservices: {
+        ...accepted().webservices,
+        drivews: { url: "https://untrusted.invalid/" },
+        docws: { url: "not-a-url" },
+      },
+    }),
+  );
+  const connection = await http.validateSession("123456789");
+  assert.equal(
+    connection.services?.ckdatabasews,
+    "https://p01-ckdatabasews.icloud.com",
+  );
+  assert.equal(connection.services?.drivews, undefined);
+  assert.equal(connection.services?.docws, undefined);
+});
+
 test("saved validation sends JSON null, drops expired cookies and respects deletions without inventing expiry", async () => {
   const http = AppleAuthHTTP.restore(snapshot(), async (url, init) => {
     assert.equal(new URL(String(url)).pathname, "/setup/ws/1/validate");
@@ -177,8 +197,8 @@ test("rollout gates are independent, consent text follows server policy and inte
     new Request("https://synthetic.invalid/connect/apple"),
     env,
   ).text();
-  assert.ok(html.includes("at most 30 days"));
-  assert.ok(!html.includes("at most 24 hours"));
+  assert.ok(html.includes("最长保存 30 天"));
+  assert.ok(!html.includes("最长保存 1 天"));
   assert.equal(sessionCheckInterval({}), 21_600_000);
   assert.equal(
     sessionCheckInterval({ APPLE_SESSION_CHECK_INTERVAL_MS: "300000" }),

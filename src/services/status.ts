@@ -21,9 +21,23 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
   const dav = await credentialStatus(env, owner);
   let pcs: Record<string, boolean> = {};
   let webSessionAvailable = false;
+  const pcsProgress: Record<
+    string,
+    { nextAttemptAt: number; expiresAt: number; exhausted: boolean }
+  > = {};
   try {
     const saved = await new AppleSessionRepository(env, owner).load();
     webSessionAvailable = web.gates.enabled;
+    for (const [name, p] of Object.entries({
+      reminders: saved.session.pcs,
+      ...saved.session.servicePcs,
+    }))
+      if (p)
+        pcsProgress[name] = {
+          nextAttemptAt: p.nextAttemptAt,
+          expiresAt: p.expiresAt,
+          exhausted: p.pcsAttempts >= 10 || p.consentChecks >= 10,
+        };
     pcs = Object.fromEntries(
       Object.entries(saved.session.servicePcs ?? {}).map(([k, v]) => [
         k,
@@ -37,6 +51,7 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
     web,
     webSessionAvailable,
     dav,
+    pcsProgress,
     services: permissions.map((c) => ({
       ...c,
       credentialAvailable: ["calendar", "contacts"].includes(c.service)

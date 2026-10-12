@@ -21,11 +21,14 @@
 
 ## 认证及管理
 
+手机优先的中文管理流程及凭证获取、导入、逐项验收步骤见 [部署后使用指南](docs/USER-GUIDE.md)；最新上游比对、认证修正和界面测试范围见 [认证与管理页复核](docs/AUTH-AND-UI-REVIEW.md)。响应式结构已实现，DOM交互测试通过；尚未完成 iPhone Safari 实机及浏览器截图验收。
+
 - `/admin` 为统一管理页；`/connect/apple` 为该管理流程的独立凭证页面。
 - Apple 主密码只在管理页浏览器中用于 SRP 计算，Worker 接收证明而非主密码。现代可信设备 2FA/SPAKE2 验证后，将 Cookie、会话 Token 加密存入 D1。SMS、电话、旧六位验证码协议及硬件安全密钥不支持；缺少兼容挑战时明确返回 `UNSUPPORTED_AUTH`，不会降级。
 - 日历、通讯录使用管理页录入的 Apple **App 专用密码**，同样加密保存；不将其放在普通环境变量。
 - 会话复用并执行有界的 `/validate`、必要时一次 `/accountLogin` Token 恢复。固定本地保留期为 30 天；Apple 可更早撤销会话。重连前不会用主密码后台登录。
 - PCS 授权分别记录 `reminders`、`notes3`、`photos`、`iclouddrive`，通过管理按钮申请/继续检查。每次最多两个请求，不在 Worker 内等待轮询。
+- 设备验证后先保存网页会话，再逐项申请 PCS；不以提醒事项 PCS 成功作为保存账户登录的前提。管理页显示等待倒计时，操作中防止重复提交，停用服务同时关闭写权限。
 - AES-256-GCM 使用随机 IV、owner/account/generation/record 绑定的 AAD。密钥环只配置到 Workers Secrets。D1 版本与租约保护网页会话并发更新；DAV 用 ETag/If-Match，创建用稳定 UUID 和 If-None-Match。
 - 服务主机及路径分别白名单验证。资源下载不附带 Apple Cookie/Authorization，Apple 签名 URL 留在加密 D1 中，不在 MCP 结果公开。
 

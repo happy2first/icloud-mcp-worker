@@ -26,6 +26,7 @@ import { DriveClient } from "./services/drive.ts";
 import { AppleConnectionService } from "./auth/service.ts";
 import { download } from "./services/downloads.ts";
 import client from "./client.generated.ts";
+import adminScript from "./admin.generated.ts";
 const worker = {
   async fetch(request: Request, env: CloudflareAccessEnv) {
     return cloudflareAccessFetch(request, env, async (authenticated) => {
@@ -35,7 +36,7 @@ const worker = {
           return (await applicationRoute(authenticated, env, client))!;
         const owner = requireOwner(authenticated, env);
         if (["/", "/admin"].includes(path) && authenticated.method === "GET")
-          return adminPage();
+          return adminPage(adminScript);
         if (path.startsWith("/download/") && authenticated.method === "GET") {
           await rateLimit(env, owner);
           return await download(env, owner, path.slice(10));
@@ -97,6 +98,11 @@ const worker = {
               })
               .strict()
               .parse(value);
+            if (!c.enabled && c.writable)
+              throw new AppError(
+                "VALIDATION_ERROR",
+                "Disabled services cannot retain write permission.",
+              );
             if (c.writable && ["notes", "photos", "drive"].includes(c.service))
               throw new AppError(
                 "FORBIDDEN",

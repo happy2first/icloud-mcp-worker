@@ -185,7 +185,7 @@ export class WebClient {
     if (!value)
       throw new AppError(
         "UNSUPPORTED_FEATURE",
-        `Apple did not advertise ${service}. Reconnect; this account may not support the service.`,
+        `Apple did not provide a supported ${service} address. Reconnect or check protocol updates; this account may not support the service.`,
         409,
       );
     return value;

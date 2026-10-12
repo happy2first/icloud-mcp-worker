@@ -6,3 +6,4 @@ dist/
 !.env.example
 wrangler.local.toml
 src/client.generated.ts
+src/admin.generated.ts

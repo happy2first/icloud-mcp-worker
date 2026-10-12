@@ -322,7 +322,6 @@ function bridgeHarness(
     { status: 204 }, // bridge/step/6 with "done"
     { status: 204 }, // trust browser
     options.account ?? { body: accountReply },
-    { body: { isICDRSDisabled: false, isDeviceConsentedForPCS: true } },
   ];
   const signal = new AbortController().signal;
   const send = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -435,7 +434,14 @@ test("HSA2 bridge orders step 0 before pushes and step 2/4/validate/done, filter
     code: fixtures.bridge.plaintext,
   });
   assert.equal(complete.type, "complete");
-  assert.equal(complete.state, "READY");
+  assert.equal(complete.state, "DEVICE_APPROVAL_PENDING");
+  assert.equal(saved().result.state, "DEVICE_APPROVAL_PENDING");
+  assert.equal(
+    requests.some((r) => /requestPCS|requestWebAccessState/.test(r.path)),
+    false,
+    "Service PCS cannot prevent saving verified account credentials",
+  );
+  assert.equal(requests[0].url.searchParams.get("authVersion"), "latest");
   assert.equal(saved().session.login.factor, "trusted-device-spake2");
   assert.equal(
     complete.expiresAt - saved().session.login.verifiedAt,

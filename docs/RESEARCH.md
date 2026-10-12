@@ -2,6 +2,8 @@
 
 Reviewed on 2026-10-12. These are source observations, not independent confirmation of live Apple behavior.
 
+Latest source follow-up on 2026-10-13: Xzese HEAD `15f2d3a335f2fd8f30b47f836d2154ca5cc4f335`; pyicloud HEAD `fb56ed6652f2d99ca8dc3cf515f7db0b319fcf1d` (`2026.10.0`). Original reuse pins below remain accurate provenance. Relevant new differences, tests and selective ports are documented in [AUTH-AND-UI-REVIEW.md](AUTH-AND-UI-REVIEW.md); current HEAD is not a claim that every upstream feature has been copied.
+
 ## Xzese
 
 Repository: https://github.com/Xzese/icloud-reminders-mcp-for-cloudflare-workers

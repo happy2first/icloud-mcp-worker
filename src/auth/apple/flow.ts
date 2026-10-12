@@ -13,7 +13,6 @@ import {
   type SrpChallenge,
 } from "./protocol.ts";
 import {
-  advancePcs,
   freshPcsCheckpoint,
   type PcsCheckpoint,
   type PcsResult,
@@ -263,11 +262,13 @@ export class AppleSignInFlow {
     requireNoAppleRejection(trust.body);
     const connection = await this.http.accountLogin();
     this.alive(revision);
-    const result = await advancePcs(
-      this.http,
-      connection.dsid,
-      freshPcsCheckpoint(),
-    );
+    // Account authentication must not depend on one service's PCS availability.
+    // Persist verified web credentials first; each service is authorized explicitly in /admin.
+    const result: PcsResult = {
+      state: "DEVICE_APPROVAL_PENDING",
+      action: "approve-device-consent",
+      checkpoint: freshPcsCheckpoint(),
+    };
     this.alive(revision);
     const login = loginAssurance(Date.now(), this.thirtyDays);
     await this.persist(

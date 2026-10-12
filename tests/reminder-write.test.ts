@@ -52,6 +52,82 @@ function parsedMap(record: CloudKitRecord) {
   return JSON.parse(wrapper.value) as { map: Record<string, unknown> };
 }
 
+test("latest native token update preserves replica lineage, increments counters and rejects overflow", () => {
+  const current = currentRecord();
+  const before = parsedMap(current).map as Record<string, any>;
+  before.titleDocument.counter = 7;
+  before.titleDocument.modificationTime = 2_000_000_000;
+  current.fields.ResolutionTokenMap = {
+    type: "STRING",
+    value: JSON.stringify({ map: before }),
+  };
+  const input = {
+    listId: baseInput.listId,
+    reminderId: current.recordName,
+    recordChangeTag: current.recordChangeTag!,
+    changes: { title: "Updated" },
+  };
+  const write = buildUpdateReminder(input, current, owner, 1_800_000_100_000);
+  const after = JSON.parse(write.fields.ResolutionTokenMap.value as string).map;
+  assert.equal(after.titleDocument.counter, 8);
+  assert.equal(after.titleDocument.replicaID, before.titleDocument.replicaID);
+  assert.equal(
+    after.titleDocument.modificationTime,
+    before.titleDocument.modificationTime,
+  );
+  assert.deepEqual(after.notesDocument, before.notesDocument);
+  before.titleDocument.counter = Number.MAX_SAFE_INTEGER;
+  current.fields.ResolutionTokenMap = {
+    type: "STRING",
+    value: JSON.stringify({ map: before }),
+  };
+  assert.throws(
+    () => buildUpdateReminder(input, current, owner, 1_800_000_100_000),
+    (e: any) => e.code === "PROTOCOL_CHANGED",
+  );
+});
+test("native all-day date without TimeZone uses a midnight UTC calendar date; early-alert changes stay guarded", () => {
+  const current = currentRecord();
+  current.fields.TimeZone = { type: "STRING", value: null };
+  current.fields.DueDate = {
+    type: "TIMESTAMP",
+    value: Date.parse("2026-06-01T00:00:00Z"),
+  };
+  const target = {
+    listId: baseInput.listId,
+    reminderId: current.recordName,
+    recordChangeTag: current.recordChangeTag!,
+  };
+  const write = buildUpdateReminder(
+    { ...target, changes: { dueDate: "2026-06-02T00:00:00Z" } },
+    current,
+    owner,
+    1_800_000_100_000,
+  );
+  assert.equal(write.fields.DueDate.value, Date.parse("2026-06-02T00:00:00Z"));
+  assert.equal(write.fields.TimeZone, undefined);
+  assert.throws(() =>
+    buildUpdateReminder(
+      { ...target, changes: { dueDate: "2026-06-02T12:00:00Z" } },
+      current,
+      owner,
+    ),
+  );
+  current.fields.DueDateDeltaAlertsData = {
+    type: "STRING",
+    value: "synthetic-metadata",
+  };
+  assert.throws(
+    () =>
+      buildUpdateReminder(
+        { ...target, changes: { dueDate: "2026-06-02T00:00:00Z" } },
+        current,
+        owner,
+      ),
+    (e: any) => e.code === "UNSUPPORTED_FEATURE",
+  );
+});
+
 test("create builder writes pinned fields, Unicode CRDT documents, parent, and resolution tokens", () => {
   const write = buildCreateReminder(baseInput, 1_800_000_000_000);
   assert.equal(
