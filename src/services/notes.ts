@@ -4,7 +4,15 @@ import { AppError } from "../errors.ts";
 import { limitedBytes } from "../transport/apple-http.ts";
 import { WebClient, field, wrappedText, serviceError } from "./web.ts";
 export async function decodeNote(value: string) {
-  const compressed = unb64(value, 262144);
+  let compressed: Uint8Array;
+  try {
+    compressed = unb64(value, 262144);
+  } catch {
+    throw new AppError(
+      "PROTOCOL_CHANGED",
+      "Apple returned invalid or oversized Notes body encoding.",
+    );
+  }
   let bytes: Uint8Array | undefined;
   for (const format of ["gzip", "deflate", "deflate-raw"] as const) {
     try {

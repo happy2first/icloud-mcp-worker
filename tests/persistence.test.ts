@@ -24,6 +24,7 @@ import {
 } from "../src/auth/apple/session-renewal.ts";
 import { encodeDocument } from "../src/reminders/crdt.ts";
 import { b64 } from "../src/crypto/bytes.ts";
+import { webOperation } from "../src/services/web.ts";
 
 // Real SQLite executes repository SQL. This adapter models D1's transactional batch.
 // The produced Worker is separately tested in workerd with real D1 bindings.
@@ -112,6 +113,126 @@ const appleSession = (): AppleSession => ({
     expiresAt: Date.now() + 300_000,
     nextAttemptAt: 0,
   },
+});
+test("generic services recover rejected read once and keep the session generation", async () => {
+  const db = new SQLiteD1(),
+    envelopes = key(),
+    env = testEnv(db, envelopes);
+  const repo = new AppleSessionRepository(env, owner);
+  const original = appleSession();
+  original.servicePcs = { notes3: { ...original.pcs, ready: true } };
+  original.renewal = { ...renewalCheckpoint(), lastValidatedAt: Date.now() };
+  const setup = await repo.begin(0);
+  await repo.commit(setup, original, "READY");
+  const nativeFetch = globalThis.fetch;
+  let validations = 0,
+    reads = 0;
+  globalThis.fetch = async (value) => {
+    assert.ok(String(value).includes("/validate"));
+    validations++;
+    return Response.json(acceptedAccount());
+  };
+  try {
+    const result = await webOperation(env, owner, "notes3", async (w) => {
+      reads++;
+      assert.equal(w.generation, setup.generation);
+      if (reads === 1) throw new AppError("REAUTH_REQUIRED", "synthetic", 409);
+      return { ok: true };
+    });
+    assert.deepEqual(result, { ok: true });
+    assert.equal(reads, 2);
+    assert.equal(validations, 1);
+    let pcsCalls = 0;
+    globalThis.fetch = async (value) => {
+      if (String(value).includes("/requestWebAccessState")) {
+        pcsCalls++;
+        return new Response("", { status: 401 });
+      }
+      assert.ok(String(value).includes("/validate"));
+      return Response.json(acceptedAccount());
+    };
+    await assert.rejects(
+      webOperation(
+        env,
+        owner,
+        "notes3",
+        async () => {
+          throw new Error("approval must not read data");
+        },
+        true,
+      ),
+      (e: any) => e.code === "RESTART_REQUIRED",
+    );
+    assert.equal(
+      pcsCalls,
+      1,
+      "PCS callback is not replayed after auth recovery",
+    );
+    globalThis.fetch = async (value) => {
+      assert.ok(String(value).includes("/validate"));
+      validations++;
+      return Response.json(acceptedAccount());
+    };
+    let rejectedReads = 0;
+    await assert.rejects(
+      webOperation(env, owner, "notes3", async () => {
+        rejectedReads++;
+        throw new AppError("REAUTH_REQUIRED", "synthetic", 409);
+      }),
+    );
+    assert.equal(rejectedReads, 2);
+    assert.equal(validations, 2);
+    await assert.rejects(
+      webOperation(env, owner, "notes3", async () => {
+        throw new Error("cooldown must block callback");
+      }),
+      (e: any) => e.code === "UPSTREAM_UNAVAILABLE",
+    );
+    assert.equal(
+      validations,
+      2,
+      "another request cannot start a recovery storm",
+    );
+    await assert.rejects(
+      webOperation(
+        { ...env, APPLE_LOGIN_ENABLED: "false" },
+        owner,
+        "notes3",
+        async () => {
+          throw new Error("must not run");
+        },
+      ),
+    );
+  } finally {
+    globalThis.fetch = nativeFetch;
+    db.sqlite.close();
+  }
+});
+test("generic PCS rejection resets only the affected approval checkpoint", async () => {
+  const db = new SQLiteD1(),
+    envelopes = key(),
+    env = testEnv(db, envelopes),
+    repo = new AppleSessionRepository(env, owner);
+  const original = appleSession();
+  original.renewal = { ...renewalCheckpoint(), lastValidatedAt: Date.now() };
+  original.servicePcs = {
+    notes3: { ...original.pcs, ready: true, pcsAttempts: 10 },
+    photos: { ...original.pcs, ready: true },
+  };
+  await repo.commit(await repo.begin(0), original, "READY");
+  try {
+    await assert.rejects(
+      webOperation(env, owner, "notes3", async () => {
+        throw new AppError("DEVICE_APPROVAL_PENDING", "synthetic", 409);
+      }),
+    );
+    const saved = await repo.load();
+    assert.equal(saved.session.servicePcs?.notes3?.ready, false);
+    assert.equal(saved.session.servicePcs?.notes3?.pcsAttempts, 0);
+    assert.equal(saved.session.servicePcs?.photos?.ready, true);
+  } finally {
+    db.sqlite.close();
+  }
 });
 const appleRepo = (db: SQLiteD1, who = owner, envelopes = key()) =>
   new AppleSessionRepository(

@@ -248,11 +248,47 @@ try {
     APP_ORIGIN: origin,
     ENCRYPTION_KEY_ID: "v1",
     ENCRYPTION_KEYS_JSON: mfEnvKey,
+    APPLE_LOGIN_ENABLED: "true",
+    APPLE_SESSION_RETENTION_WRITES: "absolute-30d-v1",
   };
-  const ticket = await issueDownload(ticketEnv, owner, {
-    url: "https://asset.icloud-content.com/file?token=synthetic-secret",
-    filename: "file.txt",
+  const { AppleSessionRepository } = await import(
+    "../src/persistence/apple-sessions.ts"
+  );
+  const { loginAssurance } = await import("../src/auth/apple/policy.ts");
+  const { freshPcsCheckpoint } = await import("../src/auth/apple/pcs.ts");
+  const repo = new AppleSessionRepository(ticketEnv, owner);
+  const setup = await repo.begin(0);
+  await repo.commit(
+    setup,
+    {
+      login: loginAssurance(),
+      auth: { clientId: "synthetic-client", headers: {}, cookies: [] },
+      connection: {
+        dsid: "123",
+        clientId: "synthetic-client",
+        clientBuildNumber: "test",
+        clientMasteringNumber: "test",
+        cloudKitURL:
+          "https://p01-ckdatabasews.icloud.com/database/1/com.apple.reminders/production/private",
+      },
+      pcs: freshPcsCheckpoint(),
+    },
+    "READY",
+  );
+  await request("/api/admin/service", {
+    service: "photos",
+    enabled: true,
+    writable: false,
   });
+  const ticket = await issueDownload(
+    ticketEnv,
+    owner,
+    {
+      url: "https://asset.icloud-content.com/file?token=synthetic-secret",
+      filename: "file.txt",
+    },
+    { service: "photos", generation: setup.generation },
+  );
   assert.ok(!JSON.stringify(ticket).includes("synthetic-secret"));
   const streamed = await request(
     "/download/" + ticket.resourceUri.split("://")[1],
@@ -266,6 +302,48 @@ try {
   );
   assert.ok(!calls.at(-1).headers.authorization);
   assert.ok(!calls.at(-1).headers.cookie);
+  const beforeDenied = calls.length;
+  await request("/api/admin/service", {
+    service: "photos",
+    enabled: false,
+    writable: false,
+  });
+  assert.equal(
+    (await request("/download/" + ticket.resourceUri.split("://")[1])).status,
+    403,
+  );
+  const deniedResource = await mcp("resources/read", {
+    uri: ticket.resourceUri,
+  });
+  assert.ok(deniedResource.error);
+  assert.equal(
+    calls.length,
+    beforeDenied,
+    "Disabled services cannot redeem outstanding tickets",
+  );
+  await request("/api/admin/service", {
+    service: "photos",
+    enabled: true,
+    writable: false,
+  });
+  // Keep the encrypted ticket to prove the generation fence, independently of cleanup.
+  await repo.disconnect();
+  await repo.begin((await repo.status()).generation);
+  const stale = await request(
+    "/download/" + ticket.resourceUri.split("://")[1],
+  );
+  assert.notEqual(stale.status, 200);
+  assert.equal(calls.length, beforeDenied);
+  assert.equal(
+    (await request("/api/admin/remove-credentials", { expectedVersion: 999 }))
+      .status,
+    409,
+  );
+  assert.equal(
+    (await request("/api/admin/remove-credentials", { expectedVersion: 1 }))
+      .status,
+    200,
+  );
   await request("/api/auth/disconnect", {});
   assert.equal(
     (await request("/download/" + ticket.resourceUri.split("://")[1])).status,
@@ -282,6 +360,9 @@ try {
         "six service gates",
         "MCP discovery without destructive/auth tools",
         "DAV conditional write with permission gates",
+        "owner/service/session-scoped encrypted downloads and MCP resources",
+        "disabled service and changed session deny download without outbound requests",
+        "credential removal requires current version",
       ],
       appleLiveValidated: false,
       productionValidated: false,

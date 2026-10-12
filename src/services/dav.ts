@@ -9,6 +9,8 @@ const parser = new XMLParser({
   removeNSPrefix: true,
   ignoreAttributes: false,
   processEntities: true,
+  parseTagValue: false,
+  trimValues: false,
   isArray: (n) => n === "response" || n === "propstat",
 });
 export const xml = (s: string) =>
@@ -55,6 +57,15 @@ export function parseMulti(text: string) {
       "Apple returned unsupported DAV XML.",
     );
   const v = parser.parse(text);
+  if (
+    !Object.hasOwn(v, "multistatus") ||
+    (v.multistatus?.response !== undefined &&
+      !Array.isArray(v.multistatus.response))
+  )
+    throw new AppError(
+      "PROTOCOL_CHANGED",
+      "Apple omitted DAV multistatus records.",
+    );
   return (v.multistatus?.response ?? []).map((r: any) => ({
     href: String(r.href ?? ""),
     props: Object.assign(
@@ -237,18 +248,29 @@ export class DavClient {
       ? `<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${xml(start!)}" end="${xml(end!)}"/></c:comp-filter></c:comp-filter>`
       : "<c:filter/>";
     const name = isCal ? "calendar" : "addressbook",
+      dataName = isCal ? "calendar-data" : "address-data",
       ns = isCal ? "caldav" : "carddav";
     const r = await this.request(
       collection,
       "REPORT",
-      `<c:${name}-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:${ns}"><d:prop><d:getetag/><c:${name}-data/></d:prop>${range}</c:${name}-query>`,
+      `<c:${name}-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:${ns}"><d:prop><d:getetag/><c:${dataName}/></d:prop>${range}</c:${name}-query>`,
       { Depth: "1" },
     );
-    return parseMulti(r.text).map((x: any) => ({
-      url: davURL(new URL(x.href, r.url).href, this.kind).href,
-      etag: x.props.getetag,
-      data: x.props[name + "-data"],
-    }));
+    return parseMulti(r.text).map((x: any) => {
+      if (
+        typeof x.props[dataName] !== "string" ||
+        typeof x.props.getetag !== "string"
+      )
+        throw new AppError(
+          "PROTOCOL_CHANGED",
+          "Apple omitted requested DAV data or ETag; no incomplete query result is returned.",
+        );
+      return {
+        url: davURL(new URL(x.href, r.url).href, this.kind).href,
+        etag: x.props.getetag,
+        data: x.props[dataName],
+      };
+    });
   }
   async get(url: string) {
     return this.request(url, "GET");
@@ -268,7 +290,7 @@ export class DavClient {
 export function escapeText(s: string) {
   return s
     .replace(/\\/g, "\\\\")
-    .replace(/\r?\n/g, "\\n")
+    .replace(/\r\n|\r|\n/g, "\\n")
     .replace(/;/g, "\\;")
     .replace(/,/g, "\\,");
 }
@@ -340,4 +362,110 @@ export function contactData(input: {
     ...(input.phone ? ["TEL:" + escapeText(input.phone)] : []),
     "END:VCARD",
   ]);
+}
+
+/** Replace only explicitly supplied fields in one unambiguous component. */
+export function updateDavData(kind: DavKind, text: string, changes: any) {
+  const lines = text
+    .replace(/\r?\n[ \t]/g, "")
+    .split(/\r?\n/)
+    .filter(Boolean);
+  const target = kind === "calendar" ? "VEVENT" : "VCARD";
+  const name = (line: string) =>
+    line.split(/[;:]/)[0].split(".").at(-1)!.toUpperCase();
+  const begins = lines.filter((l) => l.toUpperCase() === "BEGIN:" + target);
+  if (
+    begins.length !== 1 ||
+    lines.filter((l) => l.toUpperCase() === "END:" + target).length !== 1
+  )
+    throw new AppError(
+      "UNSUPPORTED_FEATURE",
+      "Ambiguous DAV component. Use the Apple app.",
+      409,
+    );
+  if (
+    kind === "calendar" &&
+    lines.some((l) =>
+      [
+        "RRULE",
+        "RDATE",
+        "EXDATE",
+        "RECURRENCE-ID",
+        "ORGANIZER",
+        "ATTENDEE",
+      ].includes(name(l)),
+    )
+  )
+    throw new AppError(
+      "UNSUPPORTED_FEATURE",
+      "Recurring or invitation event edits are unsupported. Use Apple Calendar.",
+      409,
+    );
+  let depth = 0;
+  const properties: string[] = [];
+  for (const line of lines) {
+    const upper = line.toUpperCase();
+    if (upper === "BEGIN:" + target) depth = 1;
+    else if (upper.startsWith("BEGIN:") && depth) depth++;
+    else if (upper.startsWith("END:") && depth) depth--;
+    else if (depth === 1) properties.push(line);
+  }
+  const uidLines = properties.filter((l) => name(l) === "UID");
+  if (uidLines.length !== 1 || !uidLines[0].split(":").slice(1).join(":"))
+    throw new AppError("PROTOCOL_CHANGED", "DAV resource has no unique UID.");
+  // UID is preserved from the original, never decoded and re-serialized.
+  const updated =
+    kind === "calendar"
+      ? calendarData({ uid: "unused", ...changes })
+      : contactData({ uid: "unused", ...changes });
+  const keys =
+    kind === "calendar"
+      ? [
+          "SUMMARY",
+          "DTSTART",
+          "DTEND",
+          "DURATION",
+          "DTSTAMP",
+          "LAST-MODIFIED",
+          "SEQUENCE",
+          ...(changes.description !== undefined ? ["DESCRIPTION"] : []),
+          ...(changes.location !== undefined ? ["LOCATION"] : []),
+        ]
+      : [
+          "FN",
+          "N",
+          ...(changes.email !== undefined ? ["EMAIL"] : []),
+          ...(changes.phone !== undefined ? ["TEL"] : []),
+        ];
+  const additions = updated
+    .replace(/\r\n[ \t]/g, "")
+    .split("\r\n")
+    .filter((l) => keys.includes(name(l)));
+  if (kind === "calendar") {
+    const sequences = properties.filter((l) => name(l) === "SEQUENCE");
+    const value = sequences[0]?.split(":")[1] ?? "0";
+    if (
+      sequences.length > 1 ||
+      !/^\d+$/.test(value) ||
+      !Number.isSafeInteger(Number(value) + 1)
+    )
+      throw new AppError("PROTOCOL_CHANGED", "Unsupported calendar sequence.");
+    additions.push("SEQUENCE:" + (Number(value) + 1));
+    additions.push(
+      "LAST-MODIFIED:" +
+        additions.find((l) => l.startsWith("DTSTAMP:"))!.slice(8),
+    );
+  }
+  const output: string[] = [];
+  depth = 0;
+  for (const line of lines) {
+    const upper = line.toUpperCase();
+    if (upper === "BEGIN:" + target) depth = 1;
+    else if (upper.startsWith("BEGIN:") && depth) depth++;
+    if (depth === 1 && keys.includes(name(line))) continue;
+    if (upper === "END:" + target) output.push(...additions);
+    output.push(line);
+    if (upper.startsWith("END:") && depth) depth--;
+  }
+  return foldLines(output);
 }

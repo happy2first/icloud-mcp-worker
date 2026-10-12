@@ -7,8 +7,12 @@ import {
   parseMulti,
   calendarData,
   contactData,
+  updateDavData,
 } from "../src/services/dav.ts";
-import { validatedAppleURL } from "../src/transport/apple-http.ts";
+import {
+  validatedAppleURL,
+  limitedBytes,
+} from "../src/transport/apple-http.ts";
 import { decodeNote, NotesClient } from "../src/services/notes.ts";
 import {
   PhotosClient,
@@ -23,11 +27,149 @@ import { AppleAuthHTTP } from "../src/auth/apple/http.ts";
 import { AppleHTTP } from "../src/transport/apple-http.ts";
 import { bytesField } from "../src/crypto/protobuf.ts";
 import { b64, utf8 } from "../src/crypto/bytes.ts";
+import { thumbnailResult } from "../src/mcp/services.ts";
 const creds = {
   account: "synthetic@example.invalid",
   password: "aaaa-bbbb-cccc-dddd",
 };
 const f = (value: any) => ({ value });
+test("photo thumbnails are MCP image blocks, not opaque JSON base64 text", () => {
+  const result = thumbnailResult({
+    mimeType: "image/jpeg; charset=binary",
+    base64: "synthetic",
+  });
+  assert.equal(result.content[0].type, "image");
+  assert.equal(result.content[0].mimeType, "image/jpeg");
+  assert.ok(!JSON.stringify(result.structuredContent).includes("synthetic"));
+  assert.throws(() =>
+    thumbnailResult({ mimeType: "text/html", base64: "synthetic" }),
+  );
+});
+test("CardDAV REPORT uses address-data, preserves text and refuses missing properties", async () => {
+  let missing = false;
+  const c = new DavClient("contacts", creds, async (_url, init) => {
+    assert.ok(String(init?.body).includes("<c:address-data/>"));
+    assert.ok(!String(init?.body).includes("addressbook-data"));
+    return new Response(
+      `<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav"><d:response><d:href>/a.vcf</d:href><d:propstat><d:prop><d:getetag>"v1"</d:getetag>${missing ? "" : "<c:address-data>BEGIN:VCARD\nFN:00123\nEND:VCARD\n</c:address-data>"}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`,
+      { status: 207 },
+    );
+  });
+  const r = await c.query("https://contacts.icloud.com/a/");
+  assert.equal(r[0].data, "BEGIN:VCARD\nFN:00123\nEND:VCARD\n");
+  missing = true;
+  await assert.rejects(
+    c.query("https://contacts.icloud.com/a/"),
+    (e: any) => e.code === "PROTOCOL_CHANGED",
+  );
+  assert.throws(() => parseMulti("<html>not a DAV response</html>"));
+  assert.deepEqual(parseMulti('<d:multistatus xmlns:d="DAV:"/>'), []);
+});
+test("DAV serialization escapes bare carriage returns", () => {
+  const card = contactData({ uid: "test", name: "safe\rEND:VCARD" });
+  assert.ok(card.includes("FN:safe\\nEND:VCARD"));
+  assert.equal(card.split("\r\n").filter((l) => l === "END:VCARD").length, 1);
+});
+test("calendar updates remove DURATION, advance metadata and retain nested alarms", () => {
+  const original = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:stable",
+    "DTSTART:20261012T010000Z",
+    "DURATION:PT1H",
+    "SEQUENCE:4",
+    "DTSTAMP:20200101T010000Z",
+    "SUMMARY:old",
+    "X-UNKNOWN:keep",
+    "BEGIN:VALARM",
+    "DURATION:PT5M",
+    "DESCRIPTION:alarm",
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const result = updateDavData("calendar", original, {
+    title: "new",
+    start: "20261012T020000Z",
+    end: "20261012T030000Z",
+  });
+  assert.ok(!result.includes("DURATION:PT1H"));
+  assert.ok(result.includes("DURATION:PT5M"));
+  assert.ok(result.includes("UID:stable\r\n"));
+  assert.ok(result.includes("SEQUENCE:5\r\n"));
+  assert.ok(result.includes("X-UNKNOWN:keep"));
+  assert.ok(result.includes("LAST-MODIFIED:"));
+  assert.ok(!result.includes("DTSTAMP:20200101"));
+  for (const property of [
+    "rrule:FREQ=DAILY",
+    "EXDATE:20261012T010000Z",
+    "ATTENDEE:mailto:someone@example.invalid",
+  ])
+    assert.throws(
+      () =>
+        updateDavData(
+          "calendar",
+          original.replace("UID:stable", "UID:stable\r\n" + property),
+          { title: "new", start: "20261012T020000Z", end: "20261012T030000Z" },
+        ),
+      (e: any) => e.code === "UNSUPPORTED_FEATURE",
+    );
+});
+test("contact updates replace grouped and lowercase values without duplicating old email", () => {
+  const result = updateDavData(
+    "contacts",
+    "begin:vcard\r\nVERSION:3.0\r\nUID:stable\r\nfn:old\r\nN:old;;;;\r\nitem1.EMAIL:old@example.invalid\r\nTEL:123\r\nend:vcard\r\n",
+    { name: "new", email: "new@example.invalid" },
+  );
+  assert.ok(!result.includes("old@example.invalid"));
+  assert.ok(!result.includes("fn:old"));
+  assert.ok(result.includes("TEL:123"));
+  assert.ok(result.includes("EMAIL:new@example.invalid"));
+});
+test("declared oversized response is cancelled without reading", async () => {
+  let cancelled = false;
+  const r = new Response(
+    new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    }),
+    { headers: { "content-length": "999" } },
+  );
+  await assert.rejects(limitedBytes(r, 10));
+  assert.equal(cancelled, true);
+});
+test("generic CloudKit maps HTML outages and nested zone errors safely", async () => {
+  for (const [status, body, expected] of [
+    [503, "<html>secret</html>", "UPSTREAM_UNAVAILABLE"],
+    [403, "<html>secret</html>", "FORBIDDEN"],
+    [
+      200,
+      JSON.stringify({ zones: [{ serverErrorCode: "PCS_REQUIRED" }] }),
+      "DEVICE_APPROVAL_PENDING",
+    ],
+    [200, JSON.stringify({ records: {} }), "PROTOCOL_CHANGED"],
+  ] as const) {
+    const auth = new AppleAuthHTTP(
+      new AppleHTTP(undefined, async () => new Response(body, { status })),
+    );
+    const w = new WebClient(auth, {
+      connection: {
+        cloudKitURL:
+          "https://p01-ckdatabasews.icloud.com/database/1/com.apple.reminders/production/private",
+        dsid: "123",
+        clientId: "synthetic",
+        clientBuildNumber: "test",
+        clientMasteringNumber: "test",
+      },
+    } as any);
+    await assert.rejects(
+      w.ck("notes", "changes/zone", {}),
+      (e: any) => e.code === expected && !e.message.includes("secret"),
+    );
+  }
+});
 test("DAV exact per-service allowlists reject SSRF, credentials, ports and queries", () => {
   for (const u of [
     "http://caldav.icloud.com/",

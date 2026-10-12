@@ -30,7 +30,7 @@ export async function handleMCP(
   owner: string,
 ) {
   const server = new McpServer({
-    name: "hosted-icloud-reminders",
+    name: "icloud-mcp-worker",
     version: "0.1.0",
   });
   registerServices(server, env, owner);
@@ -285,7 +285,7 @@ export async function handleMCP(
     {
       title: "Edit an open iCloud reminder",
       description:
-        "Edit one open reminder using listId, reminderId and the current recordChangeTag from get_reminder or get_reminders. Requires the authenticated owner and a ready Apple session. Provide a nonempty changes object with only the fields to edit: title, notes, priority (0/1/5/9), flagged, dueDate, timeZone or allDay. Omitted fields stay unchanged; null clears a date/time zone, and clearing a date also clears its time zone and all-day marker unless explicitly overridden. Text edits replace that field's text formatting; untouched documents are preserved. Date changes on alarmed or recurring reminders are refused because their linked records require a separate protocol. Repeating identical arguments causes no additional reminder change but may return CONFLICT because the original version is stale. Read and review before constructing any new request with a fresh tag. WRITE_OUTCOME_UNKNOWN means the change may have saved: read current state first. Never automatically retry with a new version or use force-update. Use the separate complete_reminder/reopen_reminder/delete_reminder tools for state changes. Cannot move lists or edit linked records.",
+        "Edit one open reminder using listId, reminderId and the current recordChangeTag from get_reminder or get_reminders. Requires the authenticated owner and a ready Apple session. Provide a nonempty changes object with only the fields to edit: title, notes, priority (0/1/5/9), flagged, dueDate, timeZone or allDay. Omitted fields stay unchanged; null clears a date/time zone, and clearing a date also clears its time zone and all-day marker unless explicitly overridden. Text edits replace that field's text formatting; untouched documents are preserved. Date changes on alarmed or recurring reminders are refused because their linked records require a separate protocol. Repeating identical arguments causes no additional reminder change but may return CONFLICT because the original version is stale. Read and review before constructing any new request with a fresh tag. WRITE_OUTCOME_UNKNOWN means the change may have saved: read current state first. Never automatically retry with a new version or use force-update. Use the separate complete_reminder/reopen_reminder tools for state changes. Cannot move lists or edit linked records.",
       inputSchema: UpdateReminderInput.extend({ expectedGeneration }).strict(),
       outputSchema: MutationOutput("update"),
       annotations: {
@@ -308,7 +308,7 @@ export async function handleMCP(
       `${action}_reminder`,
       {
         title: `${action === "complete" ? "Complete" : action === "reopen" ? "Reopen" : "Delete"} an iCloud reminder`,
-        description: `${operation}. Requires the authenticated owner, a ready Apple session, listId, reminderId and the latest recordChangeTag from get_reminder or get_reminders. Use get_reminder for exact completed-item lookup, or includeCompleted=true to page list history. Preserves omitted content and resolution tokens. Recurring, alarmed and nested reminders are refused. This sends one tagged record update; it does not enumerate or update children. Parent/subtask workflows are unsupported; use Apple's app for them. No parent detection or cascade support is claimed. Repeating identical arguments causes no additional reminder change but may return CONFLICT because the original version is stale. Read and review before constructing any new request with a fresh tag. WRITE_OUTCOME_UNKNOWN means Apple may have saved the action: reconcile the exact ID first. Never automatically retry with a fresh tag or force a write. Deletion is a soft, version-checked update; no hard-delete or restore tool is exposed.`,
+        description: `${operation}. Requires the authenticated owner, a ready Apple session, listId, reminderId and the latest recordChangeTag from get_reminder or get_reminders. Use get_reminder for exact completed-item lookup, or includeCompleted=true to page list history. Preserves omitted content and resolution tokens. Recurring, alarmed and nested reminders are refused. This sends one tagged record update; it does not enumerate or update children. Parent/subtask workflows are unsupported; use Apple's app for them. No parent detection or cascade support is claimed. Repeating identical arguments causes no additional reminder change but may return CONFLICT because the original version is stale. Read and review before constructing any new request with a fresh tag. WRITE_OUTCOME_UNKNOWN means Apple may have saved the action: reconcile the exact ID first. Never automatically retry with a fresh tag or force a write. No delete or restore tool is exposed.`,
         inputSchema: ReminderTargetInput.extend({
           expectedGeneration,
         }).strict(),
@@ -328,7 +328,7 @@ export async function handleMCP(
     {
       title: "Reminders connection status",
       description:
-        "Report connection state, session generation and available tools without fetching Apple data. A READY session supports bounded reads; All five mutation tools are available once the authenticated owner has a ready Apple session. writeEnabled and capabilities report current availability. Mutation tools enforce owner/session and version checks and never accept Apple credentials.",
+        "Report Reminders connection state, session generation and available tools without fetching Apple data. A READY session supports bounded reads; four mutation tools require enabled service and write permissions. writeEnabled and capabilities report current availability. Mutation tools enforce owner/session and version checks and never accept Apple credentials. Delete is not exposed. Use icloud_status for all six services.",
       inputSchema: z.object({}).strict(),
       outputSchema: ConnectionStatusOutput,
       annotations,

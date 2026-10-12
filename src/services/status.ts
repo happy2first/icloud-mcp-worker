@@ -20,8 +20,10 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
     web.capabilities[key] = web.capabilities[key] && reminders.enabled;
   const dav = await credentialStatus(env, owner);
   let pcs: Record<string, boolean> = {};
+  let webSessionAvailable = false;
   try {
     const saved = await new AppleSessionRepository(env, owner).load();
+    webSessionAvailable = web.gates.enabled;
     pcs = Object.fromEntries(
       Object.entries(saved.session.servicePcs ?? {}).map(([k, v]) => [
         k,
@@ -33,12 +35,13 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
   }
   return {
     web,
+    webSessionAvailable,
     dav,
     services: permissions.map((c) => ({
       ...c,
       credentialAvailable: ["calendar", "contacts"].includes(c.service)
         ? dav.configured
-        : web.connected,
+        : webSessionAvailable,
       pcsReady:
         c.service === "notes"
           ? !!pcs.notes3

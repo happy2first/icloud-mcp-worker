@@ -1,0 +1,33 @@
+# Code review / 代码复审 — 2026-10-12
+
+Reviewed against the original six-service goal, starting from remote commit `e558833a631ee24f8941f22ebaf16123c2c43049`. Examined the Worker entry, Access validation, management separation, authentication/session renewal and leases, encrypted storage, all six service adapters, MCP tools/resources, streaming, tests, build/configuration and deployment documentation. Rechecked pinned pyicloud Photos query builders, Notes and Drive source; Photos' recordName-index lookup matches that source and was not replaced speculatively.
+
+## Confirmed issues fixed / 已确认并修复
+
+| Area | Finding and correction |
+|---|---|
+| CardDAV | `addressbook-data` was incorrect. REPORT now requests and reads `address-data`; missing required properties fail explicitly. XML parser preserves numeric-looking strings and whitespace instead of coercing DAV content. |
+| DAV serialization | Bare CR could introduce uncontrolled content lines. CR, LF and CRLF are escaped. Non-DAV XML is rejected; legitimate empty multistatus remains valid. |
+| Calendar updates | Old DURATION could coexist with newly added DTEND; stale DTSTAMP/SEQUENCE were retained. Updates replace mutually exclusive duration, refresh metadata and advance sequence while preserving nested alarms. Case-insensitive recurrence detection includes EXDATE. Invitations are explicitly refused because editing them may trigger scheduling side effects. |
+| Contact updates | Grouped/lowercase fields could evade replacement, leaving old values beside new ones. Supplied fields now replace grouped and case-insensitive equivalents; untouched fields remain. |
+| Shared session recovery | Notes/Photos/Drive lacked the Reminders-style bounded recovery on resource authentication rejection. Reads now get at most one recovery/retry with a shared deadline, stable generation and persisted cooldown after continued rejection. PCS consent callbacks are never automatically replayed. All web-service operations obey the global Apple enable gate. |
+| PCS isolation/status | A rejected ready service reused an exhausted approval checkpoint. Only its own checkpoint is reset. Service credential availability no longer incorrectly depends on Reminders PCS being READY. |
+| Download authorization | Tickets formerly survived disabling their source service and were not bound to session generation. Encrypted tickets now bind both; HTTP and MCP redemption recheck service and current retained session. Old unscoped tickets fail closed. A reconnect/disconnect race cannot make an old generation valid again. In-flight streams are not retroactively guaranteed to stop. |
+| Resource budgets | Declared oversized responses now cancel the body without reading, releasing the upstream stream. Attachment responses carry a restrictive CSP. |
+| Error classification | HTML 5xx/403 responses and nested CloudKit zone errors are classified as availability/permission/PCS errors, not misleading JSON parse failures. Malformed CloudKit arrays and Notes body encoding produce explicit protocol errors. |
+| Management | App-password removal now requires the displayed credential version and user confirmation, preventing a stale page from deleting newer credentials. Controlled Reminders reads share the owner rate limit. |
+| MCP | Thumbnails are image content blocks, not base64 buried in JSON text. Server identity and connection descriptions now reflect six services and four exposed reminder mutations; delete stays unexposed. |
+
+## Verification / 验证
+
+- `npm run check`: TypeScript, **105 synthetic Node tests**, build and local Miniflare/workerd integration passed.
+- `wrangler deploy --dry-run`: passed; Worker upload bundle 1733.21 KiB, gzip 367.79 KiB. This command did not deploy production.
+- Local workerd covers encrypted D1 tickets, HTTP/MCP reads, disabled-service denial without contacting Apple, session-generation revocation and credential deletion version checks, in addition to the existing Access/CSRF/permission tests.
+- `npm audit --omit=dev`: **0 reported known production dependency vulnerabilities** at review time. This is not a guarantee of vulnerability absence or a cryptographic audit.
+- No database migration is required. Existing unscoped five-minute download references must be reissued after upgrade.
+
+## Still unverified / 尚未验证
+
+No real Apple account login, physical-device approval, live six-service calls, Cloudflare production deployment or ChatGPT Managed OAuth end-to-end flow has been performed. Existing scope limits remain: timed UTC calendar events, basic contact fields, unsupported complex reminder writes, Notes title/snippet search and plaintext bodies, personal Photos library, bounded directory reads/downloads. This source review does not turn synthetic protocol fixtures into evidence of Apple compatibility.
+
+真实联调仍需按照 PROTOCOL-AND-ACCEPTANCE.md，在安全管理页面录入账户信息，通过 Workers Secrets 配置密钥；不要在聊天或仓库提供密码、Cookie、Token。当前结果是“代码已修复 + 模拟测试/本地 Worker 通过”，不是“Apple 或生产环境已通过”。

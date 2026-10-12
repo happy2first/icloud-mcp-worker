@@ -7,11 +7,13 @@ import {
   AppleSessionRenewal,
   appleRequestBudget,
   appleSuccess,
+  renewalCheckpoint,
 } from "../auth/apple/session-renewal.ts";
 import { advancePcs, freshPcsCheckpoint } from "../auth/apple/pcs.ts";
 import { AppError, UpstreamRateLimitedError } from "../errors.ts";
 import { appleWebHeaders } from "../transport/apple-http.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
+import { requireAppleEnabled } from "../auth/gates.ts";
 export type PcsService = "notes3" | "photos" | "iclouddrive";
 export async function webOperation<T>(
   env: RuntimeEnv,
@@ -20,97 +22,159 @@ export async function webOperation<T>(
   run: (client: WebClient) => Promise<T>,
   approve = false,
 ) {
+  requireAppleEnabled(env);
   const repo = new AppleSessionRepository(env, owner);
   const initial = await repo.load();
-  const saved = await new AppleSessionRenewal(env, repo).ensure(
-    initial.fence.generation,
-    appleRequestBudget(),
-  );
-  const fence = await repo.claimRenewal(
-    saved.fence.generation,
-    saved.fence.version,
-  );
-  const http = AppleAuthHTTP.restore(
-    saved.session.auth,
-    fetch,
-    AbortSignal.timeout(25000),
-  );
-  let session = saved.session;
-  try {
-    const state = session.servicePcs?.[service];
-    if (approve) {
-      const checkpoint =
-        state && state.expiresAt > Date.now() ? state : freshPcsCheckpoint();
-      const result = await advancePcs(
-        http,
-        session.connection.dsid,
-        checkpoint,
-        Date.now(),
-        service,
-      );
-      session = {
-        ...session,
-        servicePcs: {
-          ...session.servicePcs,
-          [service]: { ...result.checkpoint, ready: result.state === "READY" },
-        },
-        auth: http.snapshot(),
-      };
-      await repo.commitResume(
-        fence,
-        session,
-        saved.state,
-        saved.action ?? undefined,
-      );
-      return {
-        state: result.state,
-        nextAttemptAt: result.checkpoint.nextAttemptAt,
-      } as T;
-    }
-    if (!state?.ready)
+  const renewal = new AppleSessionRenewal(env, repo);
+  const budget = appleRequestBudget();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const saved = await renewal.ensure(initial.fence.generation, budget);
+    if (budget.deadline <= Date.now())
       throw new AppError(
-        "DEVICE_APPROVAL_PENDING",
-        `Open /admin and authorize ${service} PCS access.`,
-        409,
+        "UPSTREAM_UNAVAILABLE",
+        "Apple request deadline reached. Retry later.",
+        503,
+        true,
       );
-    const result = await run(new WebClient(http, session));
-    await repo.commitResume(
-      fence,
-      appleSuccess({ ...session, auth: http.snapshot() }),
-      saved.state,
-      saved.action ?? undefined,
+    const fence = await repo.claimRenewal(
+      saved.fence.generation,
+      saved.fence.version,
     );
-    return result;
-  } catch (e) {
-    if (
-      e instanceof AppError &&
-      e.code === "DEVICE_APPROVAL_PENDING" &&
-      session.servicePcs?.[service]?.ready
-    ) {
-      session = {
-        ...session,
-        servicePcs: {
-          ...session.servicePcs,
-          [service]: { ...session.servicePcs[service]!, ready: false },
-        },
-        auth: http.snapshot(),
-      };
+    const http = AppleAuthHTTP.restore(
+      saved.session.auth,
+      fetch,
+      AbortSignal.timeout(Math.min(25000, budget.deadline - Date.now())),
+    );
+    let session = saved.session;
+    try {
+      const state = session.servicePcs?.[service];
+      if (approve) {
+        const checkpoint =
+          state && state.expiresAt > Date.now() ? state : freshPcsCheckpoint();
+        const result = await advancePcs(
+          http,
+          session.connection.dsid,
+          checkpoint,
+          Date.now(),
+          service,
+        );
+        session = {
+          ...session,
+          servicePcs: {
+            ...session.servicePcs,
+            [service]: {
+              ...result.checkpoint,
+              ready: result.state === "READY",
+            },
+          },
+          auth: http.snapshot(),
+        };
+        await repo.commitResume(
+          fence,
+          session,
+          saved.state,
+          saved.action ?? undefined,
+        );
+        return {
+          state: result.state,
+          nextAttemptAt: result.checkpoint.nextAttemptAt,
+        } as T;
+      }
+      if (!state?.ready)
+        throw new AppError(
+          "DEVICE_APPROVAL_PENDING",
+          `Open /admin and authorize ${service} PCS access.`,
+          409,
+        );
+      const result = await run(
+        new WebClient(http, session, saved.fence.generation),
+      );
       await repo.commitResume(
         fence,
-        session,
+        appleSuccess({ ...session, auth: http.snapshot() }),
         saved.state,
         saved.action ?? undefined,
       );
+      return result;
+    } catch (e) {
+      if (
+        e instanceof AppError &&
+        e.code === "REAUTH_REQUIRED" &&
+        attempt === 0 &&
+        !budget.recoveryUsed &&
+        env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1"
+      ) {
+        await repo.releaseResume(fence);
+        await renewal.ensure(initial.fence.generation, budget, true);
+        if (approve)
+          throw new AppError(
+            "RESTART_REQUIRED",
+            "Apple session recovered. Check PCS approval again; the consent request was not replayed.",
+            409,
+          );
+        continue;
+      }
+      if (
+        e instanceof AppError &&
+        e.code === "REAUTH_REQUIRED" &&
+        env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1"
+      ) {
+        const metadata = session.renewal ?? renewalCheckpoint();
+        const failures = Math.min(8, metadata.failures + 1);
+        await repo.commitResume(
+          fence,
+          {
+            ...session,
+            auth: { ...session.auth, cookies: http.snapshot().cookies },
+            renewal: {
+              ...metadata,
+              failures,
+              requiredAction: "retry",
+              lastErrorCode: "UPSTREAM_UNAVAILABLE",
+              nextRetryAt:
+                Date.now() + Math.min(3600000, 30000 * 2 ** (failures - 1)),
+            },
+          },
+          saved.state,
+          saved.action ?? undefined,
+        );
+      }
+      if (
+        e instanceof AppError &&
+        e.code === "DEVICE_APPROVAL_PENDING" &&
+        session.servicePcs?.[service]?.ready
+      ) {
+        session = {
+          ...session,
+          servicePcs: {
+            ...session.servicePcs,
+            [service]: { ...freshPcsCheckpoint(), ready: false },
+          },
+          auth: http.snapshot(),
+        };
+        await repo.commitResume(
+          fence,
+          session,
+          saved.state,
+          saved.action ?? undefined,
+        );
+      }
+      throw e;
+    } finally {
+      await repo.releaseResume(fence);
     }
-    throw e;
-  } finally {
-    await repo.releaseResume(fence);
   }
+  throw new AppError(
+    "REAUTH_REQUIRED",
+    "Apple rejected the service after bounded session recovery. Reconnect in /admin.",
+    409,
+  );
 }
 export class WebClient {
   constructor(
     readonly auth: AppleAuthHTTP,
     readonly session: AppleSession,
+    readonly generation: number = 0,
   ) {}
   root(service: "ckdatabasews" | "drivews" | "docws") {
     const value =
@@ -160,12 +224,26 @@ export class WebClient {
       throw new UpstreamRateLimitedError(
         retrySeconds(r.headers.get("retry-after")),
       );
+    // Gate transport errors before parsing: Apple often sends HTML on outages.
+    if (r.status >= 500)
+      throw new AppError(
+        "UPSTREAM_UNAVAILABLE",
+        "Apple service is temporarily unavailable. Retry later.",
+        503,
+        true,
+      );
     let body: any;
     try {
       body = JSON.parse(
         new TextDecoder("utf-8", { fatal: true }).decode(r.bytes),
       );
     } catch {
+      if (r.status === 403)
+        throw new AppError(
+          "FORBIDDEN",
+          "Apple denied service access. Check iCloud web access in account settings.",
+          403,
+        );
       throw new AppError(
         "PROTOCOL_CHANGED",
         "Apple returned an unsupported response.",
@@ -193,13 +271,6 @@ export class WebClient {
         "Apple denied service access. Check iCloud web access in account settings.",
         403,
       );
-    if (r.status >= 500)
-      throw new AppError(
-        "UPSTREAM_UNAVAILABLE",
-        "Apple service is temporarily unavailable. Retry later.",
-        503,
-        true,
-      );
     if (code) throw serviceError(code);
     if (r.status !== 200)
       throw new AppError(
@@ -222,8 +293,24 @@ export class WebClient {
       `/database/1/${service === "photos" ? "com.apple.photos.cloud" : "com.apple.notes"}/production/private/${operation}`,
       payload,
     );
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      throw new AppError(
+        "PROTOCOL_CHANGED",
+        "Apple returned an invalid CloudKit envelope.",
+      );
+    if (
+      (body.zones !== undefined && !Array.isArray(body.zones)) ||
+      (body.records !== undefined && !Array.isArray(body.records))
+    )
+      throw new AppError(
+        "PROTOCOL_CHANGED",
+        "Apple returned invalid CloudKit records or zones.",
+      );
+    for (const zone of body.zones ?? [])
+      if (zone?.serverErrorCode)
+        throw serviceError(String(zone.serverErrorCode));
     for (const r of body.records ?? []) {
-      if (r.serverErrorCode) throw serviceError(String(r.serverErrorCode));
+      if (r?.serverErrorCode) throw serviceError(String(r.serverErrorCode));
     }
     return body;
   }

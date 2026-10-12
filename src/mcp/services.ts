@@ -11,7 +11,7 @@ import {
   DavClient,
   calendarData,
   contactData,
-  foldLines,
+  updateDavData,
 } from "../services/dav.ts";
 import { webOperation } from "../services/web.ts";
 import { NotesClient } from "../services/notes.ts";
@@ -65,6 +65,25 @@ function result(value: any) {
     structuredContent: value,
   };
 }
+export function thumbnailResult(value: {
+  mimeType: string | null;
+  base64: string;
+}) {
+  const mimeType = value.mimeType?.split(";")[0].trim().toLowerCase();
+  if (
+    !mimeType ||
+    !["image/jpeg", "image/png", "image/webp", "image/gif"].includes(mimeType)
+  )
+    throw new AppError(
+      "UNSUPPORTED_FEATURE",
+      "Apple did not provide a supported thumbnail image.",
+      409,
+    );
+  return {
+    content: [{ type: "image" as const, mimeType, data: value.base64 }],
+    structuredContent: { mimeType },
+  };
+}
 export function registerServices(
   server: McpServer,
   env: RuntimeEnv,
@@ -93,7 +112,10 @@ export function registerServices(
       async (args: any) => {
         try {
           if (service) await requireService(env, owner, service, write);
-          return result(await fn(args));
+          const value = await fn(args);
+          return name === "photos_thumbnail"
+            ? thumbnailResult(value)
+            : result(value);
         } catch (e) {
           return {
             ...result({ error: publicError(e, crypto.randomUUID()) }),
@@ -238,67 +260,13 @@ export function registerServices(
             "ETag changed. Read and review current data.",
             409,
           );
-        const unfolded = current.text.replace(/\r?\n[ \t]/g, "");
-        if (
-          kind === "calendar" &&
-          ((unfolded.match(/BEGIN:VEVENT/g) ?? []).length !== 1 ||
-            /^(?:RRULE|RDATE|RECURRENCE-ID)[;:]/m.test(unfolded))
-        )
-          throw new AppError(
-            "UNSUPPORTED_FEATURE",
-            "Recurring or multi-event edits are unsupported. Use Apple Calendar.",
-            409,
-          );
-        if (
-          kind === "contacts" &&
-          (unfolded.match(/BEGIN:VCARD/g) ?? []).length !== 1
-        )
-          throw new AppError(
-            "UNSUPPORTED_FEATURE",
-            "Ambiguous contact resource.",
-            409,
-          );
-        const uid = unfolded.match(/^UID(?:;[^:]*)?:(.+)$/m)?.[1]?.trim();
-        if (!uid)
-          throw new AppError("PROTOCOL_CHANGED", "DAV resource has no UID.");
-        const updated =
-          kind === "calendar"
-            ? calendarData({ uid, ...a.changes })
-            : contactData({ uid, ...a.changes });
-        const keys =
-          kind === "calendar"
-            ? [
-                "SUMMARY",
-                "DTSTART",
-                "DTEND",
-                ...(a.changes.description !== undefined ? ["DESCRIPTION"] : []),
-                ...(a.changes.location !== undefined ? ["LOCATION"] : []),
-              ]
-            : [
-                "FN",
-                "N",
-                ...(a.changes.email !== undefined ? ["EMAIL"] : []),
-                ...(a.changes.phone !== undefined ? ["TEL"] : []),
-              ];
-        const additions = updated
-          .replace(/\r\n[ \t]/g, "")
-          .split("\r\n")
-          .filter((s: string) => keys.includes(s.split(/[;:]/)[0]));
-        let level = 0;
-        const target = kind === "calendar" ? "VEVENT" : "VCARD",
-          lines = unfolded.split(/\r?\n/).filter(Boolean),
-          output: string[] = [];
-        for (const line of lines) {
-          if (line === "BEGIN:" + target) level = 1;
-          else if (line.startsWith("BEGIN:") && level) level++;
-          if (level === 1 && keys.includes(line.split(/[;:]/)[0])) continue;
-          if (line === "END:" + target) output.push(...additions);
-          output.push(line);
-          if (line.startsWith("END:") && level) level--;
-        }
-        return client.put(a.url, foldLines(output), a.etag);
+        return client.put(
+          a.url,
+          updateDavData(kind, current.text, a.changes),
+          a.etag,
+        );
       },
-      "Version checked field replacement. Unknown properties and alarm components are retained. Calendar recurrence edits are refused. Contacts changes replace the supplied property, including all values for that property.",
+      "Version checked field replacement. Unknown properties and alarm components are retained. Calendar recurrence and invitation edits are refused. Contacts changes replace the supplied property, including grouped values for that property.",
     );
   const notes = (fn: (n: NotesClient, a: any) => Promise<any>) => (a: any) =>
     webOperation(env, owner, "notes3", (w) => fn(new NotesClient(w), a));
@@ -379,7 +347,10 @@ export function registerServices(
       .strict(),
     false,
     photos(async (p, a) =>
-      issueDownload(env, owner, await p.asset(a.id, a.variant)),
+      issueDownload(env, owner, await p.asset(a.id, a.variant), {
+        service: "photos",
+        generation: p.web.generation,
+      }),
     ),
     "Create a five-minute authenticated stream reference. No Apple signed URL is exposed. Maximum streamed size 100 MiB.",
   );
@@ -390,7 +361,10 @@ export function registerServices(
     false,
     async (a) => {
       const ticket = await photos(async (p: any, a: any) =>
-        issueDownload(env, owner, await p.asset(a.id, "thumb")),
+        issueDownload(env, owner, await p.asset(a.id, "thumb"), {
+          service: "photos",
+          generation: p.web.generation,
+        }),
       )(a);
       const r = await download(env, owner, ticket.resourceUri.split("://")[1]);
       const bytes = await limitedBytes(r, 1048576);
@@ -399,7 +373,7 @@ export function registerServices(
         base64: toBase64(bytes),
       };
     },
-    "Read specified photo thumbnail, at most 1 MiB, as base64.",
+    "Read specified photo thumbnail, at most 1 MiB, as an MCP image content block.",
   );
   register(
     "drive_browse",
@@ -430,6 +404,7 @@ export function registerServices(
           env,
           owner,
           await new DriveClient(w).download(a.documentId),
+          { service: "drive", generation: w.generation },
         ),
       ),
     "Create an authenticated file stream reference from DocWS document ID. Shared-owner zones unsupported.",

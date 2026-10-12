@@ -40,7 +40,11 @@ const worker = {
           await rateLimit(env, owner);
           return await download(env, owner, path.slice(10));
         }
-        if (path === "/mcp" || path.startsWith("/api/auth/"))
+        if (
+          path === "/mcp" ||
+          path === "/api/apple/read" ||
+          path.startsWith("/api/auth/")
+        )
           await rateLimit(env, owner);
         if (path === "/api/apple/read")
           await requireService(env, owner, "reminders");
@@ -69,11 +73,20 @@ const worker = {
               CredentialInput.parse(value),
             );
           } else if (path === "/api/admin/remove-credentials") {
-            z.object({}).strict().parse(value);
-            await db(env)
-              .prepare("DELETE FROM credentials WHERE owner_id=?")
-              .bind(owner)
+            const { expectedVersion } = z
+              .object({ expectedVersion: z.number().int().positive().safe() })
+              .strict()
+              .parse(value);
+            const deleted = await db(env)
+              .prepare("DELETE FROM credentials WHERE owner_id=? AND version=?")
+              .bind(owner, expectedVersion)
               .run();
+            if (deleted.meta.changes !== 1)
+              throw new AppError(
+                "CONFLICT",
+                "Credentials changed. Refresh before removing them.",
+                409,
+              );
             result = { removed: true };
           } else if (path === "/api/admin/service") {
             const c = z

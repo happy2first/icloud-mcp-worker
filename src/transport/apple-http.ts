@@ -64,11 +64,13 @@ export async function limitedBytes(
   limit = 1_048_576,
 ): Promise<Uint8Array> {
   const declared = Number(response.headers.get("content-length"));
-  if (declared > limit)
+  if (declared > limit) {
+    await response.body?.cancel().catch(() => {});
     throw new AppError(
       "PROTOCOL_CHANGED",
       "The Apple response exceeded the byte budget.",
     );
+  }
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

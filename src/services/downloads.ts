@@ -1,5 +1,7 @@
 import { AppError } from "../errors.ts";
-import { db, cipher } from "./config.ts";
+import { db, cipher, requireService } from "./config.ts";
+import { AppleSessionRepository } from "../persistence/apple-sessions.ts";
+import { requireAppleEnabled } from "../auth/gates.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 export function assetURL(value: string) {
   const u = new URL(value);
@@ -28,11 +30,24 @@ export async function issueDownload(
   env: RuntimeEnv,
   owner: string,
   asset: { url: string; filename: string },
+  scope: { service: "photos" | "drive"; generation: number },
 ) {
+  requireAppleEnabled(env);
+  await requireService(env, owner, scope.service);
+  const saved = await new AppleSessionRepository(env, owner).load();
+  if (saved.fence.generation !== scope.generation)
+    throw new AppError(
+      "CONFLICT",
+      "Apple session changed. Request a new download.",
+      409,
+    );
   assetURL(asset.url);
   const id = crypto.randomUUID(),
-    expiresAt = Date.now() + 300000;
-  const envelope = await cipher(env).encrypt(asset, context(owner, id));
+    expiresAt = Math.min(Date.now() + 300000, saved.session.login.expiresAt);
+  const envelope = await cipher(env).encrypt(
+    { ...asset, ...scope },
+    context(owner, id),
+  );
   await db(env)
     .prepare("DELETE FROM download_tickets WHERE expires_at<?")
     .bind(Date.now())
@@ -69,10 +84,31 @@ export async function download(
       "Download reference expired. Request a new reference.",
       409,
     );
-  const asset = await cipher(env).decrypt<{ url: string; filename: string }>(
-    JSON.parse(row.envelope),
-    context(owner, id),
-  );
+  const asset = await cipher(env).decrypt<{
+    url: string;
+    filename: string;
+    service: "photos" | "drive";
+    generation: number;
+  }>(JSON.parse(row.envelope), context(owner, id));
+  // Older unscoped tickets deliberately fail closed after this upgrade.
+  if (
+    !["photos", "drive"].includes(asset.service) ||
+    !Number.isSafeInteger(asset.generation)
+  )
+    throw new AppError(
+      "AUTH_EXPIRED",
+      "Request a fresh scoped download reference.",
+      409,
+    );
+  requireAppleEnabled(env);
+  await requireService(env, owner, asset.service);
+  const saved = await new AppleSessionRepository(env, owner).load();
+  if (saved.fence.generation !== asset.generation)
+    throw new AppError(
+      "AUTH_EXPIRED",
+      "Apple session changed. Request a new download reference.",
+      409,
+    );
   let url = assetURL(asset.url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
@@ -142,6 +178,7 @@ export async function download(
         "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(asset.filename.replace(/[\r\n]/g, ""))}`,
         "cache-control": "private, no-store",
         "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
       },
     });
   } catch (e) {

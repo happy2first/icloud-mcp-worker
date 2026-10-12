@@ -10,7 +10,7 @@ One Cloudflare Worker, TypeScript, D1, and Cloudflare Access with Managed OAuth.
 
 | Service | Implemented | Initial limitations |
 |---|---|---|
-| Calendar | CalDAV discovery, query, get, create, update; internal delete | UTC timed events; recurring/multiple-event edits refused; unknown fields and alarms retained |
+| Calendar | CalDAV discovery, query, get, create, update; internal delete | UTC timed events; recurring/invitation/multiple-event edits refused; unknown fields and alarms retained |
 | Contacts | CardDAV discovery, query, get, create, update; internal delete | Name/email/phone; supplied EMAIL/TEL replaces all values for that property; untouched properties retained |
 | Reminders | Lists, paginated reads, exact lookup, create, update, complete, reopen; internal soft delete | Xzese CloudKit/CRDT implementation; version tags and deterministic creation IDs; shared discovery and complex linked writes unsupported |
 | Notes | Folder pages, recents, title/snippet search, Protobuf body decoding | Read-only; continue pages for exhaustive title/snippet search; body search, locked notes and rich attachment/table rendering unsupported |
@@ -46,7 +46,7 @@ Edit the ignored local config: replace the database ID, add a custom-domain rout
 | `TEAM_DOMAIN` | Full `https://your-team.cloudflareaccess.com` |
 | `POLICY_AUD` | Access application audience protecting the entire hostname |
 | `REMINDERS_OWNER_ID` | Allowed Access JWT `sub`; upstream name retained, applies to all services |
-| `APPLE_LOGIN_ENABLED` | `true` enables new browser sign-ins |
+| `APPLE_LOGIN_ENABLED` | `true` enables browser sign-ins and web-session service operations |
 | `APPLE_SESSION_RENEWAL_ENABLED` | `saved-tokens-v1` |
 | `APPLE_SESSION_RETENTION_WRITES` | `absolute-30d-v1` |
 | `ENCRYPTION_KEY_ID` | Active key identifier, e.g. `v1` |
@@ -78,9 +78,11 @@ After `WRITE_OUTCOME_UNKNOWN`, reconcile the exact UUID/resource/version before 
 
 ## Operational bounds
 
-60 MCP/management operations per owner per minute. Typical Apple HTTP timeout 8–10 seconds; web operation deadline 25 seconds. CloudKit continuation and photo offsets expose completion explicitly. Photo offsets reflect a changing live index. DAV and Drive paginate bounded responses rather than claiming unlimited enumeration: DAV response 2 MiB, other Apple JSON 1 MiB, Notes decompressed body 256 KiB.
+60 MCP/management operations per owner per minute. Typical Apple HTTP timeout 8–10 seconds; each generic web attempt is limited to 25 seconds, with a 40-second total network budget including session recovery. CloudKit continuation and photo offsets expose completion explicitly. Photo offsets reflect a changing live index. DAV and Drive paginate bounded responses rather than claiming unlimited enumeration: DAV response 2 MiB, other Apple JSON 1 MiB, Notes decompressed body 256 KiB.
 
-Signed Apple asset URLs never appear in MCP results. Encrypted download tickets expire after five minutes and belong to the owner. Authenticated HTTP streaming supports up to 100 MiB/60 seconds; MCP `resources/read` supports up to 5 MiB, thumbnails up to 1 MiB. Larger files require the Access-authenticated HTTP URL. Disconnect revokes outstanding download tickets.
+Signed Apple asset URLs never appear in MCP results. Encrypted download tickets expire within five minutes or the session's earlier expiry. Each redemption checks the owner, source service permission and Apple session generation. Authenticated HTTP streaming supports up to 100 MiB/60 seconds; MCP `resources/read` supports up to 5 MiB, thumbnails up to 1 MiB as MCP image content. Larger files require the Access-authenticated HTTP URL. Disabling a service blocks later redemptions; disconnect/reconnect invalidates old tickets. Already-started streams are not guaranteed to stop immediately.
+
+See the [2026-10-12 code review](docs/CODE-REVIEW.md) for fixes and regression coverage. This review does not certify live Apple or production behavior.
 
 ## Sources and validation
 
