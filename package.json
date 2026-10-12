@@ -1,0 +1,36 @@
+{
+  "name": "icloud-mcp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "test": "node --experimental-transform-types --test tests/*.test.ts",
+    "test:worker": "node tests/worker.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:worker",
+    "deploy": "npm run build && wrangler deploy",
+    "db:local": "wrangler d1 execute DB --local --file schema.sql"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "fast-xml-parser": "^5.3.0",
+    "fflate": "0.8.3",
+    "jose": "6.2.12",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261006.1",
+    "@types/node": "22.19.19",
+    "esbuild": "^0.25.0",
+    "miniflare": "4.20260730.0",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3",
+    "wrangler": "4.147.0"
+  }
+}

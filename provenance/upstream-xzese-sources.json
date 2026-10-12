@@ -1,0 +1,159 @@
+{
+  "status": "gated authentication, read transport and experimental controlled create/edit implemented; live write interoperability unproven",
+  "sources": [
+    {
+      "repository": "https://github.com/timlaing/pyicloud",
+      "revision": "e2e44ab875d47dab4475096021da60030f26c35e",
+      "license": "MIT",
+      "copyright": "PyiCloud Authors",
+      "files": [
+        {
+          "path": "pyicloud/srp_password.py",
+          "sha256": "b43c1ebd05185b5efea4ff864ee7dbdf67c3bbeec761854d8937367fa9151ed3",
+          "destinations": [
+            "src/crypto/apple-kdf.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/base.py",
+          "sha256": "e0c0cf76d5abe770f059e10f55770634d92b96448fbba3d236f2c9d2e8c92d76",
+          "destinations": [
+            "src/crypto/srp.ts",
+            "src/transport/apple-http.ts",
+            "src/auth/apple/http.ts",
+            "src/auth/apple/flow.ts",
+            "src/auth/apple/pcs.ts",
+            "src/auth/browser-proof.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/hsa2_bridge_prover.py",
+          "sha256": "1c668d6a0cfd963f0991bb73b4874c3f2e839beec3d8ab684361052be7b5579c",
+          "destinations": [
+            "src/crypto/spake2.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/hsa2_bridge.py",
+          "sha256": "391c72de608cf0f76a3a632c5e287f77403c111696f96e3f732021e5e1373f34",
+          "destinations": [
+            "src/transport/apple-push.ts",
+            "src/auth/apple/bridge.ts",
+            "src/transport/apple-websocket.ts",
+            "src/auth/apple/boot-context.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/_protocol.py",
+          "sha256": "4d6997661faa2920267be0696dde8033693875d4e3cd9a386fc423a7ff06970d",
+          "destinations": [
+            "src/reminders/crdt.ts",
+            "src/reminders/writes.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/_writes.py",
+          "sha256": "9b66dfc87aad243ba2c9b04bc458fffbec54b6055895bafc2d7a1506bf443ec2",
+          "destinations": [
+            "src/reminders/writes.ts",
+            "src/icloud/cloudkit.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/protobuf/reminders.proto",
+          "sha256": "f7f5a57bcbac0ceab458363ac9668473feac4b36a41885dc1e888aeee9e42ed9",
+          "destinations": [
+            "protocol reference only; no schema copied"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/protobuf/versioned_document.proto",
+          "sha256": "4be3cf60468d8bae46a562fe306d204bb181ffc55b3c84dcec16aa0d1bca3df7",
+          "destinations": [
+            "protocol reference only; no schema copied"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/service.py",
+          "sha256": "4e9e716483c015d99ceb60ade33f40df84f74834dd83fc31c7b8aee0f7ebc9d4",
+          "destinations": [
+            "src/icloud/cloudkit.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/_constants.py",
+          "sha256": "53139107373e23ba144a170066754b61b9b033ddb82df140a76e45a9329902fd",
+          "destinations": [
+            "src/icloud/cloudkit.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/_reads.py",
+          "sha256": "178871ceda234c06d31de97d08980e9b351e73afc91f40134a1eaa35a5246d37",
+          "destinations": [
+            "src/icloud/cloudkit.ts",
+            "src/auth/service.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/services/reminders/_mappers.py",
+          "sha256": "fbe7d6c39d172b1ad1f49c7927be0b65c5c4b4c60b47b8f37e4936d945648754",
+          "destinations": [
+            "src/icloud/cloudkit.ts"
+          ]
+        },
+        {
+          "path": "pyicloud/common/cloudkit/client.py",
+          "sha256": "1e95cfd895705addc65cb1ee0fa019e23c906901bbd6ebc29d73a8c0b5009e09",
+          "destinations": [
+            "src/icloud/cloudkit.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "repository": "https://github.com/chesnokpeter/icloud-linux",
+      "revision": "3f30ab68d9fc71051ff68f9fc8476d6140217e77",
+      "license": "MIT",
+      "copyright": "Petr Chesnokov",
+      "role": "application scope and operation reference; no application service port yet"
+    }
+  ],
+  "fixtureGenerator": "tests/fixtures/generate.py",
+  "fixtureSha256": "c2d703812c3303a30380cad1e377243bcf9f5a3052775699453522c933887bcd",
+  "buildTimePython": [
+    {
+      "name": "srp",
+      "version": "1.0.22",
+      "role": "build-time synthetic reference only",
+      "license": "MIT",
+      "classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ]
+    },
+    {
+      "name": "cryptography",
+      "version": "46.0.5",
+      "role": "build-time synthetic reference only",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "classifiers": []
+    },
+    {
+      "name": "protobuf",
+      "version": "6.33.5",
+      "role": "build-time synthetic reference only",
+      "license": "3-Clause BSD License",
+      "classifiers": []
+    }
+  ],
+  "nodePackages": "package-lock.json and provenance/dependencies.json",
+  "provenanceReviewRequired": [
+    "Pinned protobuf files say they were extracted from Apple main.js. No .proto or generated .pb2 source was copied into this project. Review provenance before expanding schema reuse.",
+    "Synthetic vectors use the same pinned protocol reference, so agreement is not independent Apple verification."
+  ],
+  "notImplemented": [
+    "Complete cached read/search/sync release",
+    "Completion/deletion, advanced linked-record mutations and live write acceptance",
+    "Independent cryptographic audit and standalone live deployment acceptance"
+  ]
+}
