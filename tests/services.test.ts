@@ -351,3 +351,13 @@ test("generic web client uses photos.cloud container and keeps DocWS document_id
   assert.equal(calls[1].url.searchParams.get("document_id"), "synthetic");
   assert.equal(calls[1].url.searchParams.get("dsid"), "123");
 });
+
+test("DAV builtin XML entities decode without permitting DTDs", () => {
+  const rows = parseMulti(
+    '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/a</d:href><d:propstat><d:prop><d:displayname>A&amp;B &lt;team&gt;</d:displayname></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>',
+  );
+  assert.equal(rows[0].props.displayname, "A&B <team>");
+  assert.throws(() =>
+    parseMulti('<!DOCTYPE root [<!ENTITY bomb "huge">]><root>&bomb;</root>'),
+  );
+});

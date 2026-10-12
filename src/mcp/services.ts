@@ -7,7 +7,12 @@ import { publicError, AppError } from "../errors.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 import { requireService } from "../services/config.ts";
 import { serviceStatus } from "../services/status.ts";
-import { DavClient, calendarData, contactData } from "../services/dav.ts";
+import {
+  DavClient,
+  calendarData,
+  contactData,
+  foldLines,
+} from "../services/dav.ts";
 import { webOperation } from "../services/web.ts";
 import { NotesClient } from "../services/notes.ts";
 import { PhotosClient } from "../services/photos.ts";
@@ -291,7 +296,7 @@ export function registerServices(
           output.push(line);
           if (line.startsWith("END:") && level) level--;
         }
-        return client.put(a.url, output.join("\r\n") + "\r\n", a.etag);
+        return client.put(a.url, foldLines(output), a.etag);
       },
       "Version checked field replacement. Unknown properties and alarm components are retained. Calendar recurrence edits are refused. Contacts changes replace the supplied property, including all values for that property.",
     );

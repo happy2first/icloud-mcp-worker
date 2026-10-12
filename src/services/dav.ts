@@ -8,7 +8,7 @@ export type DavKind = "calendar" | "contacts";
 const parser = new XMLParser({
   removeNSPrefix: true,
   ignoreAttributes: false,
-  processEntities: false,
+  processEntities: true,
   isArray: (n) => n === "response" || n === "propstat",
 });
 export const xml = (s: string) =>
