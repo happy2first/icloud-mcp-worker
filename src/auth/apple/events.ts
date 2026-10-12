@@ -67,6 +67,7 @@ export const ServerAuthEvent = z.discriminatedUnion("type", [
           message: text(1024),
           requestId: z.string().uuid(),
           retryable: z.boolean(),
+          retryAfterSeconds: z.number().finite().min(0).max(86400).optional(),
         })
         .strict(),
     })

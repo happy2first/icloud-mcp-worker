@@ -190,7 +190,7 @@ export function registerServices(
       "Read exact DAV resource including ETag before modifying.",
     );
   }
-  const event = z
+  const eventFields = z
     .object({
       title: z.string().min(1).max(512),
       start: date,
@@ -198,8 +198,11 @@ export function registerServices(
       description: z.string().max(16000).optional(),
       location: z.string().max(1024).optional(),
     })
-    .strict()
-    .refine((a) => a.end > a.start, "End must follow start.");
+    .strict();
+  const event = eventFields.refine(
+    (a) => a.end > a.start,
+    "End must follow start.",
+  );
   const contact = z
     .object({
       name: z.string().min(1).max(512),
@@ -211,6 +214,24 @@ export function registerServices(
         .optional(),
     })
     .strict();
+  const eventChanges = eventFields
+    .partial()
+    .refine(
+      (a) => Object.values(a).some((v) => v !== undefined),
+      "Supply at least one change.",
+    )
+    .refine(
+      (a) =>
+        (a.start === undefined && a.end === undefined) ||
+        (a.start !== undefined && a.end !== undefined && a.end > a.start),
+      "Date changes require both increasing UTC start/end values.",
+    );
+  const contactChanges = contact
+    .partial()
+    .refine(
+      (a) => Object.values(a).some((v) => v !== undefined),
+      "Supply at least one change.",
+    );
   register(
     "calendar_create",
     "calendar",
@@ -248,7 +269,11 @@ export function registerServices(
       kind + "_update",
       kind,
       z
-        .object({ url, etag, changes: kind === "calendar" ? event : contact })
+        .object({
+          url,
+          etag,
+          changes: kind === "calendar" ? eventChanges : contactChanges,
+        })
         .strict(),
       true,
       async (a) => {
@@ -266,7 +291,7 @@ export function registerServices(
           a.etag,
         );
       },
-      "Version checked field replacement. Unknown properties and alarm components are retained. Calendar recurrence and invitation edits are refused. Contacts changes replace the supplied property, including grouped values for that property.",
+      "Version checked partial field update. Supply only fields the user wants changed; omitted name/title/time fields remain intact. Calendar time changes require both start and end UTC values. Unknown properties and alarms are retained. Recurrence/invitation edits are refused. Supplied contact EMAIL/TEL replaces all grouped values for that property.",
     );
   const notes = (fn: (n: NotesClient, a: any) => Promise<any>) => (a: any) =>
     webOperation(env, owner, "notes3", (w) => fn(new NotesClient(w), a));

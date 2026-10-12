@@ -416,15 +416,21 @@ export function updateDavData(kind: DavKind, text: string, changes: any) {
   // UID is preserved from the original, never decoded and re-serialized.
   const updated =
     kind === "calendar"
-      ? calendarData({ uid: "unused", ...changes })
-      : contactData({ uid: "unused", ...changes });
+      ? calendarData({
+          uid: "unused",
+          title: "",
+          start: "",
+          end: "",
+          ...changes,
+        })
+      : contactData({ uid: "unused", name: "", ...changes });
   const keys =
     kind === "calendar"
       ? [
-          "SUMMARY",
-          "DTSTART",
-          "DTEND",
-          "DURATION",
+          ...(changes.title !== undefined ? ["SUMMARY"] : []),
+          ...(changes.start !== undefined || changes.end !== undefined
+            ? ["DTSTART", "DTEND", "DURATION"]
+            : []),
           "DTSTAMP",
           "LAST-MODIFIED",
           "SEQUENCE",
@@ -432,8 +438,7 @@ export function updateDavData(kind: DavKind, text: string, changes: any) {
           ...(changes.location !== undefined ? ["LOCATION"] : []),
         ]
       : [
-          "FN",
-          "N",
+          ...(changes.name !== undefined ? ["FN", "N"] : []),
           ...(changes.email !== undefined ? ["EMAIL"] : []),
           ...(changes.phone !== undefined ? ["TEL"] : []),
         ];

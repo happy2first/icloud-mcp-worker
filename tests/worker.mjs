@@ -51,6 +51,11 @@ const mf = new Miniflare({
     });
     if (u.hostname === "caldav.icloud.com" && req.method === "PUT")
       return new Response("", { status: 201, headers: { etag: '"created"' } });
+    if (u.hostname === "caldav.icloud.com" && req.method === "GET")
+      return new Response(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:stable\r\nDTSTART;TZID=Asia/Shanghai:20261013T090000\r\nDURATION:PT1H\r\nSUMMARY:Old\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        { headers: { etag: '"current"' } },
+      );
     if (u.hostname === "asset.icloud-content.com")
       return new Response("synthetic-file", {
         headers: { "content-type": "text/plain" },
@@ -251,6 +256,34 @@ try {
   assert.equal(calls[0].headers["if-none-match"], "*");
   assert.ok(calls[0].body.includes("SUMMARY:Synthetic event"));
   assert.ok(!JSON.stringify(create).includes("aaaa-bbbb"));
+  const updated = await mcp("tools/call", {
+    name: "calendar_update",
+    arguments: {
+      url: "https://caldav.icloud.com/test/existing.ics",
+      etag: '"current"',
+      changes: { title: "Renamed" },
+    },
+  });
+  assert.equal(updated.result.structuredContent.status, 201);
+  assert.ok(
+    calls.at(-1).body.includes("DTSTART;TZID=Asia/Shanghai:20261013T090000"),
+  );
+  assert.ok(calls.at(-1).body.includes("DURATION:PT1H"));
+  const beforeInvalid = calls.length;
+  const invalidDatePatch = await mcp("tools/call", {
+    name: "calendar_update",
+    arguments: {
+      url: "https://caldav.icloud.com/test/existing.ics",
+      etag: '"current"',
+      changes: { start: "20261013T010000Z" },
+    },
+  });
+  assert.ok(invalidDatePatch.error || invalidDatePatch.result?.isError);
+  assert.equal(
+    calls.length,
+    beforeInvalid,
+    "Incomplete date pairs must fail before contacting Apple",
+  );
   const info = await mcp("tools/call", {
     name: "icloud_status",
     arguments: {},

@@ -5,7 +5,11 @@ import { b64, concat, hex, unb64, unhex, utf8 } from "../src/crypto/bytes.ts";
 import { bytesField, uint } from "../src/crypto/protobuf.ts";
 import { AppleSignInFlow } from "../src/auth/apple/flow.ts";
 import { AppleAuthHTTP } from "../src/auth/apple/http.ts";
-import { AuthResponseSequence } from "../src/auth/apple/events.ts";
+import {
+  AuthResponseSequence,
+  ServerAuthEvent,
+} from "../src/auth/apple/events.ts";
+import { publicError, UpstreamRateLimitedError } from "../src/errors.ts";
 import {
   APPLE_AUTH_PROTOCOL,
   AUTH_LIFETIME_MS,
@@ -102,6 +106,32 @@ const binding = {
   transactionId: "e706b087-1111-4111-8111-111111111111",
   nonce: "a".repeat(64),
 };
+test("login error frames accept bounded public retry metadata without accepting secret fields", () => {
+  const event = {
+    type: "failed",
+    direction: "server",
+    ...binding,
+    sequence: 1,
+    error: publicError(new UpstreamRateLimitedError(7), crypto.randomUUID()),
+  };
+  const parsed = ServerAuthEvent.parse(event);
+  assert.equal(parsed.type, "failed");
+  if (parsed.type === "failed") assert.equal(parsed.error.retryAfterSeconds, 7);
+  assert.equal(
+    ServerAuthEvent.safeParse({
+      ...event,
+      error: { ...event.error, cookie: "synthetic-secret" },
+    }).success,
+    false,
+  );
+  assert.equal(
+    ServerAuthEvent.safeParse({
+      ...event,
+      error: { ...event.error, retryAfterSeconds: -1 },
+    }).success,
+    false,
+  );
+});
 const startMessage = {
   ...binding,
   sequence: 0 as const,

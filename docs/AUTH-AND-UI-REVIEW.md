@@ -17,7 +17,9 @@ Both authorize/signin implementations use `authVersion=latest`; the Worker has a
 - Each service keeps independent PCS checkpoints and is explicitly authorized in management. Optional unsupported Drive/DocWS roots are discarded only for those services; a valid shared CloudKit login survives. Mandatory CloudKit root remains strictly validated. No unsafe optional root is requested.
 - SRP s2k/s2k_fo and modern trusted-device SPAKE2/WebSocket verification remain browser-proof based. Apple password, password-derived secret and user's input code are not persisted. SMS/phone/legacy/security-key login is still unsupported and fails explicitly.
 - App-password input trims account whitespace and normalizes 16 lowercase letters with optional spaces/hyphens into Apple's grouped form before encryption. Saved state is separate from actual DAV authentication; the UI explicitly asks the user to check Calendar and Contacts after saving.
+- Strict login error frames now accept bounded public retryAfterSeconds metadata; otherwise a valid rate-limit error could be mistaken for a malformed authentication exchange. Secret or unknown fields remain rejected.
 - Latest Xzese resolution-token updates preserve existing replica ID, increment safe counters and keep merge timestamps monotonic. Overflow fails before dispatch. Native all-day reminders without a stored TimeZone accept only explicit midnight-UTC date changes. Early-alert date changes remain blocked instead of silently changing a linked schedule.
+- DAV update tools accept nonempty partial changes. An email-only contact edit preserves FN/N structured names; a title-only calendar edit preserves DTSTART parameters and DURATION. Actual time edits require both increasing start/end UTC values and keep ETag fencing.
 
 ## Management interaction findings and fixes
 
@@ -45,7 +47,7 @@ Calendar/CardDAV's internal version-checked delete method and Reminders internal
 
 ## Validation and remaining gates
 
-- 118 synthetic Node tests, TypeScript, build and local workerd integration pass (including pending Reminders PCS with independently available shared credentials).
+- 120 synthetic Node tests, TypeScript, build and local workerd integration pass (including pending Reminders PCS with independently available shared credentials and a partial calendar update through MCP).
 - Wrangler dry-run checks the Worker bundle, not Cloudflare production behavior.
 - No database schema migration is needed for this update.
 - Production authorization is still unavailable (`wrangler whoami`: not authenticated), D1 ID is a placeholder, and no Apple credentials were supplied. Real authentication, all six actual reads/writes, ChatGPT Managed OAuth and phone browser verification remain pending.

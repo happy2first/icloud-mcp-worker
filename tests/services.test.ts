@@ -33,6 +33,22 @@ const creds = {
   password: "aaaa-bbbb-cccc-dddd",
 };
 const f = (value: any) => ({ value });
+test("partial DAV updates preserve calendar time representation and structured contact names", () => {
+  const event =
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:stable\r\nDTSTART;TZID=Asia/Shanghai:20261013T090000\r\nDURATION:PT1H\r\nSUMMARY:Old\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+  const patched = updateDavData("calendar", event, { title: "New" });
+  assert.ok(patched.includes("DTSTART;TZID=Asia/Shanghai:20261013T090000"));
+  assert.ok(patched.includes("DURATION:PT1H"));
+  assert.ok(!patched.includes("DTEND:"));
+  const card =
+    "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:stable\r\nFN:陈振华\r\nN:陈;振华;;;\r\nEMAIL:old@example.invalid\r\nEND:VCARD\r\n";
+  const contact = updateDavData("contacts", card, {
+    email: "new@example.invalid",
+  });
+  assert.ok(contact.includes("FN:陈振华\r\n"));
+  assert.ok(contact.includes("N:陈;振华;;;\r\n"));
+  assert.ok(!contact.includes("old@example.invalid"));
+});
 test("photo thumbnails are MCP image blocks, not opaque JSON base64 text", () => {
   const result = thumbnailResult({
     mimeType: "image/jpeg; charset=binary",
