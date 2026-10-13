@@ -61,7 +61,7 @@ export function mountAdmin(
   };
   const hints: Record<string, string> = {
     NOT_CONNECTED: "请先配置对应凭证。",
-    REAUTH_REQUIRED: "Apple 拒绝了凭证，请重新登录或更换 App 专用密码。",
+    REAUTH_REQUIRED: "Apple 拒绝了当前服务的凭证，请查看错误详情。",
     DEVICE_APPROVAL_PENDING: "在 iPhone 或 iPad 上批准访问，再点击“继续验证”。",
     VERIFICATION_REQUIRED: "请重新登录并完成可信设备验证。",
     CONFLICT: "配置已变化，请刷新状态后再操作。",

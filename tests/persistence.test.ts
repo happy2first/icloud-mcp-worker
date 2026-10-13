@@ -379,6 +379,7 @@ const hasCode = (code: string) => (error: unknown) =>
 for (const mode of [
   "recovered",
   "still-rejected",
+  "exchange-rejected",
   "no-replay",
   "no-token",
 ] as const) {
@@ -392,6 +393,7 @@ for (const mode of [
     original.connection.services = {
       fmip: "https://p123-fmipweb.icloud.com.cn",
     };
+    original.servicePcs = { notes3: { ...original.pcs, ready: true } };
     original.renewal = { ...renewalCheckpoint(), lastValidatedAt: Date.now() };
     if (mode === "no-token") original.auth.headers = {};
     const fence = await repo.begin(0);
@@ -408,6 +410,15 @@ for (const mode of [
           JSON.parse(String(init?.body)).dsWebAuthToken,
           "header-session-secret",
         );
+        if (mode === "exchange-rejected")
+          return new Response("{}", {
+            status: 401,
+            headers: {
+              "set-cookie":
+                "X-APPLE-WEBAUTH-TOKEN=; Domain=.icloud.com.cn; Path=/; Max-Age=0; Secure",
+              "X-Apple-Session-Token": "rejected-response-token",
+            },
+          });
         return new Response(
           JSON.stringify({
             ...acceptedAccount("123456789", "p123-ckdatabasews.icloud.com.cn"),
@@ -453,7 +464,11 @@ for (const mode of [
             e.code === "REAUTH_REQUIRED" &&
             (mode === "no-token"
               ? e.message.includes("no saved session token")
-              : e.message.includes("HTTP 421")),
+              : e.message.includes(
+                  mode === "exchange-rejected"
+                    ? "account-login (cn): HTTP 401"
+                    : "HTTP 421",
+                )),
         );
       assert.deepEqual(
         calls,
@@ -463,13 +478,28 @@ for (const mode of [
               "/setup/ws/1/accountLogin",
               "/fmipservice/client/web/initClient",
             ]
-          : ["/fmipservice/client/web/initClient"],
+          : mode === "exchange-rejected"
+            ? ["/fmipservice/client/web/initClient", "/setup/ws/1/accountLogin"]
+            : ["/fmipservice/client/web/initClient"],
       );
       const saved = await repo.load();
       assert.equal(saved.fence.generation, fence.generation);
       assert.deepEqual(saved.session.login, original.login);
+      if (mode === "exchange-rejected") {
+        assert.deepEqual(saved.session.auth, original.auth);
+        assert.equal(saved.session.renewal?.requiredAction, null);
+        assert.equal(saved.session.renewal?.lastErrorCode, null);
+        assert.equal(saved.session.renewal?.nextRetryAt, null);
+        await assert.rejects(run(), hasCode("REAUTH_REQUIRED"));
+        assert.equal(calls.length, 2);
+        assert.deepEqual(
+          await webOperation(env, owner, "notes3", async () => ({ ok: true })),
+          { ok: true },
+        );
+        assert.equal(calls.length, 2);
+      }
       if (mode === "still-rejected") {
-        await assert.rejects(run(), hasCode("UPSTREAM_UNAVAILABLE"));
+        await assert.rejects(run(), hasCode("REAUTH_REQUIRED"));
         assert.equal(calls.length, 3);
       }
     } finally {

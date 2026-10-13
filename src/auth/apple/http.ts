@@ -87,12 +87,13 @@ export interface AppleReply {
 }
 export class AppleAuthenticationError extends AppError {
   readonly confirmed: boolean;
-  constructor(confirmed: boolean) {
+  constructor(confirmed: boolean, diagnostic?: string) {
     super(
       "REAUTH_REQUIRED",
-      confirmed
-        ? "Apple rejected the saved authentication tokens. Sign in and verify your device again."
-        : "Apple web authentication needs a saved-token check.",
+      diagnostic ??
+        (confirmed
+          ? "Apple rejected the saved authentication tokens. Sign in and verify your device again."
+          : "Apple web authentication needs a saved-token check."),
       409,
     );
     this.confirmed = confirmed;
@@ -422,7 +423,10 @@ export class AppleAuthHTTP {
         409,
       );
     if ([401, 421, 450].includes(reply.status))
-      throw new AppleAuthenticationError(exchange);
+      throw new AppleAuthenticationError(
+        exchange,
+        `Apple ${exchange ? "account-login" : "session-validation"} (${this.region}): HTTP ${reply.status}; authentication rejected; hsaChallengeRequired=${safeFlag(body?.hsaChallengeRequired)}; hsaTrustedBrowser=${safeFlag(body?.hsaTrustedBrowser)}.`,
+      );
     // A resource permission failure is not evidence that saved tokens are revoked.
     if (reply.status === 403)
       throw new AppError(
@@ -445,7 +449,11 @@ export class AppleAuthHTTP {
         "INVALID_AUTH_TOKEN",
         "AUTHENTICATION_FAILED",
       ].includes(String(body.serverErrorCode).toUpperCase());
-    if (explicitRejection) throw new AppleAuthenticationError(exchange);
+    if (explicitRejection)
+      throw new AppleAuthenticationError(
+        exchange,
+        `Apple ${exchange ? "account-login" : "session-validation"} (${this.region}): HTTP ${reply.status}; authenticated=${safeFlag(body.authenticated)}; valid=${safeFlag(body.valid)}; recognized authentication rejection=${["AUTHENTICATION_REQUIRED", "NOT_AUTHENTICATED", "INVALID_AUTH_TOKEN", "AUTHENTICATION_FAILED"].includes(String(body.serverErrorCode).toUpperCase())}; saved-token exchange=${exchange}.`,
+      );
     try {
       requireNoAppleRejection(
         body,

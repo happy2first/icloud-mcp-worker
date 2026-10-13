@@ -37,6 +37,24 @@ export const RenewalCheckpointSchema = z
       ])
       .nullable(),
     lastErrorMessage: z.string().max(2000).optional(),
+    findMyRecovery: z
+      .object({
+        nextRetryAt: time,
+        code: z.enum([
+          "REAUTH_REQUIRED",
+          "VERIFICATION_REQUIRED",
+          "TERMS_ACTION_REQUIRED",
+          "RATE_LIMITED",
+          "PROTOCOL_CHANGED",
+          "FORBIDDEN",
+          "UPSTREAM_UNAVAILABLE",
+          "UNSUPPORTED_AUTH",
+          "APPLE_REDIRECT_ERROR",
+        ]),
+        message: z.string().max(2000),
+      })
+      .strict()
+      .optional(),
     lastErrorCode: z
       .enum([
         "REAUTH_REQUIRED",
@@ -297,12 +315,54 @@ export class AppleSessionRenewal {
               nextRetryAt: null,
               requiredAction: null,
               lastErrorCode: null,
+              ...(exchangeSavedToken ? { findMyRecovery: undefined } : {}),
             },
           },
           saved.state,
           saved.action ?? undefined,
         );
       } catch (error) {
+        // A service-triggered exchange failure must not revoke the shared
+        // cookie session used by already working services. Keep failed response
+        // cookies/tokens out of that saved session, and block only Find My.
+        if (
+          exchangeSavedToken &&
+          error instanceof AppError &&
+          !["AUTH_EXPIRED", "CONFLICT", "CONFIGURATION_REQUIRED"].includes(
+            error.code,
+          )
+        ) {
+          const code = RenewalCheckpointSchema.shape.findMyRecovery
+            .unwrap()
+            .shape.code.safeParse(error.code);
+          if (!code.success) throw error;
+          const message = (
+            error.message +
+            " Find My saved-token exchange failed. Original shared credentials preserved; no further automatic retry. Sign in and verify again to restore Find My if the token remains rejected."
+          ).slice(0, 2000);
+          await this.repository.commitResume(
+            fence,
+            {
+              ...saved.session,
+              renewal: {
+                ...metadata,
+                findMyRecovery: {
+                  nextRetryAt: Date.now() + 30_000,
+                  code: code.data,
+                  message,
+                },
+              },
+            },
+            saved.state,
+            saved.action ?? undefined,
+          );
+          throw new AppError(
+            error.code,
+            message,
+            error.status,
+            error.retryable,
+          );
+        }
         if (error instanceof AppleAuthenticationError && error.confirmed) {
           await this.repository.invalidate(fence, "apple-sign-in");
           throw error;

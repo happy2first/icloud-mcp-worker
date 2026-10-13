@@ -26,6 +26,18 @@ export async function webOperation<T>(
   requireAppleEnabled(env);
   const repo = new AppleSessionRepository(env, owner);
   const initial = await repo.load();
+  const fmipRecovery = initial.session.renewal?.findMyRecovery;
+  if (
+    service === "fmip" &&
+    fmipRecovery?.nextRetryAt &&
+    Date.now() < fmipRecovery.nextRetryAt
+  )
+    throw new AppError(
+      fmipRecovery.code,
+      fmipRecovery.message +
+        " Cached Find My recovery failure; no Apple request made on this attempt. Wait before retrying.",
+      409,
+    );
   const renewal = new AppleSessionRenewal(env, repo);
   const budget = appleRequestBudget();
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -114,9 +126,7 @@ export async function webOperation<T>(
         replaySafe &&
         attempt === 0 &&
         !budget.recoveryUsed &&
-        (service === "fmip"
-          ? env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
-          : env.APPLE_SESSION_RENEWAL_ENABLED !== "false")
+        env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
       ) {
         await repo.releaseResume(fence);
         await renewal.ensure(
@@ -136,9 +146,30 @@ export async function webOperation<T>(
       if (
         e instanceof AppError &&
         e.code === "REAUTH_REQUIRED" &&
-        (service === "fmip"
-          ? env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
-          : env.APPLE_SESSION_RENEWAL_ENABLED !== "false")
+        service === "fmip"
+      ) {
+        await repo.commitResume(
+          fence,
+          {
+            ...saved.session,
+            renewal: {
+              ...(saved.session.renewal ?? renewalCheckpoint()),
+              findMyRecovery: {
+                nextRetryAt: Date.now() + 30_000,
+                code: e.code,
+                message: e.message.slice(0, 2000),
+              },
+            },
+          },
+          saved.state,
+          saved.action ?? undefined,
+        );
+      }
+      if (
+        e instanceof AppError &&
+        e.code === "REAUTH_REQUIRED" &&
+        service !== "fmip" &&
+        env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
       ) {
         const metadata = session.renewal ?? renewalCheckpoint();
         const failures = Math.min(8, metadata.failures + 1);
