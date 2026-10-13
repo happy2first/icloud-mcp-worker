@@ -49,14 +49,14 @@ npx wrangler deploy --config wrangler.local.toml
 
 云端构建只取得 Git 仓库中的文件，不能读取你电脑上被忽略的 `wrangler.local.toml`。此前全零 `database_id` 导致部署报错 10181；默认配置现已移除占位 ID。当前锁定的 Wrangler 4.147.0 支持按 `database_name` 查找已有数据库，若不存在则自动创建，并在后续部署复用。参考 [Cloudflare 自动资源配置说明](https://developers.cloudflare.com/changelog/post/2025-10-24-automatic-resource-provisioning/)。此行为已核对 Wrangler 实际源码，尚未在你的生产账户中验证。
 
-1. 在 Cloudflare Worker 的构建设置中选择 GitHub `main` 分支、仓库根目录；构建命令设为 `npm run build`，部署命令改为 **`npm run deploy:cloud`**。该命令先部署、再向同一个 DB 执行 `schema.sql`；只有两步都成功才算部署完成。首次建表完成前不能使用管理功能。
+1. 在 Cloudflare Worker 的构建设置中选择 GitHub `main` 分支、仓库根目录；构建命令设为 `npm run build`，推荐部署命令 **`npm run deploy:cloud`**，显式执行远程 schema。Worker 现在也会在首次经过 Access 验证的 API 请求中安全初始化缺失的表；直接使用 `npx wrangler deploy` 时也不必另做首次建表。两种方式都使用同一个 schema.sql，不清空已有数据。
 2. 构建 API Token 必须具有对应账户的 Workers Scripts 编辑权限、D1 读取/编辑权限；自定义域名还需要对应域名/路由的部署权限。如自动配置报权限错误，在 Cloudflare 构建的 API Token 设置中补齐，或先手动创建 D1、把真实 ID 填入仓库配置。数据库 ID 不是密码，但不要虚构它。
 3. 若已有数据库名就是 `icloud-mcp-worker`，保持现有名称，Wrangler 会复用；若名称不同，先把 `database_name` 和真实 `database_id` 改成同一个现有数据库的信息。不要另建数据库代替已有存储，也不要删除已有数据库。没有任何数据库时才允许首次自动创建。
 4. 在 Worker 的域名设置中添加自己的自定义域名，或在仓库 `wrangler.toml` 顶层添加 custom_domain 路由。在 Dashboard 添加 TEAM_DOMAIN、POLICY_AUD 即可；不要只修改本地忽略文件，也不要在 Git 配置里重复写同名旧值覆盖 Dashboard 设置。
 5. 在 Worker 的“变量和机密”中把 `ENCRYPTION_KEYS_JSON` 添加为 **Secret**，值直接填写上节生成的 Base64 字符串，不加 JSON 或引号。这是运行时机密，不应添加到 Git 文件或构建日志。旧 JSON 格式仍可使用；如改为纯 Base64，只提取同一密钥值，不能重新生成替换，否则已有加密凭证无法解密。
 6. 点击部署最新提交。日志须同时显示 Worker 部署成功和远程 schema 执行成功。SQL 仅使用 `CREATE TABLE IF NOT EXISTS`，重复执行不会清空已有数据；它是当前初始结构，未来结构变更仍需独立迁移。
 
-若仍使用 `npx wrangler deploy`，它只部署 Worker、不建表；首次部署后需在有 Cloudflare 授权的终端执行 `npx wrangler d1 execute DB --remote --file schema.sql --yes`，或把仓库 `schema.sql` 的完整内容在该 D1 的控制台执行。D1 建表不证明 Apple 凭证有效，部署成功后仍需继续完成下面的配置及真实服务检查。
+首次访问管理页时，状态接口只读取 D1，不联系 Apple。缺失表由 Worker 自动创建；已有但不兼容的列结构返回 STORAGE_SCHEMA_MISMATCH，需检查所绑定的数据库并执行明确迁移，不能删库重建。D1 暂时不可用返回 STORAGE_UNAVAILABLE，不能解释为 Apple 断连。也可以手动执行 `npx wrangler d1 execute DB --remote --file schema.sql --yes` 初始化空库。D1 就绪不证明 Apple 凭证有效，仍需继续完成下面的真实服务检查。
 
 ## 2. 确认 Apple 账户准备完成
 

@@ -35,6 +35,8 @@
 
 ## 部署
 
+首次经过 Access 验证的 API 请求会自动初始化空 D1 的五张表，使用构建时嵌入的同一份 schema.sql。重复初始化保留已有凭证和会话；不自动改写不兼容的旧表。管理状态错误会区分数据库不可用与结构不兼容，不再误报 Apple 连接失败。
+
 需要自行提供 Cloudflare 账户授权和专用域名；本项目尚未验证生产部署。使用 Cloudflare Workers Builds 从 GitHub 部署时，阅读 [云端构建部署步骤](docs/USER-GUIDE.md#11-cloudflare-workers-builds从-github-部署)，部署命令设为 `npm run deploy:cloud`。Wrangler 按名称复用或创建 D1，随后初始化表结构。仓库已移除无效的全零数据库 ID。本地下述配置不会上传到云端构建环境。
 
 ```bash

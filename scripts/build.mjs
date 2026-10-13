@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 await mkdir("dist", { recursive: true });
 const admin = await build({
   entryPoints: ["src/app/admin-entry.ts"],
@@ -28,6 +28,11 @@ await writeFile(
 await build({
   entryPoints: ["src/index.ts"],
   outfile: "dist/worker.js",
+  define: {
+    __D1_SCHEMA_SQL__: JSON.stringify(
+      await readFile(new URL("../schema.sql", import.meta.url), "utf8"),
+    ),
+  },
   bundle: true,
   format: "esm",
   platform: "browser",

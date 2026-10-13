@@ -11,6 +11,12 @@ import { applicationRoute } from "../src/api/router.ts";
 import { publicError } from "../src/errors.ts";
 
 test("single Secret chooses the key automatically and preserves existing encrypted records", async () => {
+  const storageFailure = publicError(
+    new Error("D1_ERROR: no such table: synthetic-private-detail"),
+    "synthetic-request",
+  );
+  assert.equal(storageFailure.code, "STORAGE_UNAVAILABLE");
+  assert.ok(!storageFailure.message.includes("private-detail"));
   assert.throws(
     () => envelopesFromSecret(undefined),
     (error: any) =>

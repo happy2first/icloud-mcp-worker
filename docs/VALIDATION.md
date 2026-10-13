@@ -2,13 +2,15 @@
 
 Initial development date: 2026-10-12.
 
+First-run D1 fix (2026-10-13): local workerd with a fresh, uninitialized D1 reproduced the operator's UPSTREAM_UNAVAILABLE status failure before any Apple request. Tests previously initialized schema outside the Worker, hiding this case. Worker now initializes only missing tables from build-embedded schema.sql, checks required columns and preserves existing records. New SQLite tests cover concurrent initialization, restart preservation, failed-initialization retry and refusal of incompatible schemas/destructive SQL. The workerd test now starts with empty D1 and verifies management status succeeds without Apple traffic. This is a reproduced local cause; the operator's actual production database has not been inspected.
+
 2026-10-13 runtime binding fix: a new regression test first reproduced CONFIGURATION_REQUIRED with a valid 44-character Base64 Secret exposed through a non-enumerable getter. The Access adapter's `{...env}` dropped that binding and D1. The fixed per-request context forwards binding reads to the original env receiver without enumeration or shared mutation. The regression now passes; missing Secret and invalid key format have separate messages. This identifies a reproducible source defect, not proof of the operator's exact production binding descriptors. Latest checks include the separately merged Find My implementation; production resolution still requires deployment and retry.
 
 | Layer | Status | Evidence / limits |
 |---|---|---|
 | Source implementation / 代码实现 | Implemented within documented scope | Pure Worker entry, static management flow, D1 schema, six service adapters, MCP tools/resources; deletes internal only |
 | TypeScript check / 类型检查 | Passed | `npm run typecheck`; fresh checkout resolves generated browser bundle declaration |
-| Synthetic unit/protocol tests / 模拟测试 | Passed | 136 Node tests: SRP/SPAKE2 transcripts, auth phases, Cookie scope, AES-GCM/AAD, D1 fences/renewal, reminder writes, DAV/XML/conditional partial updates, Notes compression/Protobuf, photo pairing, Drive paths, PCS app names/allowlists and management/login DOM interaction; includes automatic origin/verified identity, single encryption Secret compatibility and unlimited session retention |
+| Synthetic unit/protocol tests / 模拟测试 | Passed | 139 Node tests: SRP/SPAKE2 transcripts, auth phases, Cookie scope, AES-GCM/AAD, D1 fences/renewal, reminder writes, DAV/XML/conditional partial updates, Notes compression/Protobuf, photo pairing, Drive paths, PCS app names/allowlists and management/login DOM interaction; includes automatic origin/verified identity, single encryption Secret compatibility and unlimited session retention |
 | Bundle / 构建 | Passed | esbuild browser proof bundle and plain Worker ESM; no Node compatibility flags, Next.js, React, R2 or server runtime dependency |
 | Local Worker compatibility / 本地 Worker | Passed | Built artifact in Miniflare/workerd; real local D1; synthetic signed Access JWT/JWKS; owner isolation, CSRF, management/client routes, six service gates, MCP tool discovery, permission-gated conditional DAV write, encrypted download tickets/resources/streams and disconnect revocation |
 | Wrangler upload validation / 上传预检 | Passed | `wrangler deploy --dry-run`; named D1 binding without placeholder ID; does not verify remote provisioning |

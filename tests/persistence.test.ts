@@ -25,16 +25,18 @@ import {
 import { encodeDocument } from "../src/reminders/crdt.ts";
 import { b64 } from "../src/crypto/bytes.ts";
 import { webOperation } from "../src/services/web.ts";
+import { ensureStorage } from "../src/persistence/initialize.ts";
 
 // Real SQLite executes repository SQL. This adapter models D1's transactional batch.
 // The produced Worker is separately tested in workerd with real D1 bindings.
 class SQLiteD1 {
   readonly sqlite = new DatabaseSync(":memory:");
   afterStatement: ((sql: string) => Promise<void>) | null = null;
-  constructor() {
-    this.sqlite.exec(
-      readFileSync(new URL("../schema.sql", import.meta.url), "utf8"),
-    );
+  constructor(initialize = true) {
+    if (initialize)
+      this.sqlite.exec(
+        readFileSync(new URL("../schema.sql", import.meta.url), "utf8"),
+      );
   }
   withSession() {
     return this;
@@ -80,6 +82,95 @@ const key = () =>
   new Envelopes("synthetic", {
     synthetic: b64(crypto.getRandomValues(new Uint8Array(32))),
   });
+
+test("first-run D1 schema initializes once under concurrency and preserves encrypted rows on restart", async () => {
+  const database = new SQLiteD1(false);
+  const schema = readFileSync(
+    new URL("../schema.sql", import.meta.url),
+    "utf8",
+  );
+  let creates = 0;
+  database.afterStatement = async (sql) => {
+    if (sql.startsWith("CREATE")) creates++;
+  };
+  await Promise.all(
+    Array.from({ length: 4 }, () => ensureStorage(database.env(), schema)),
+  );
+  assert.equal(creates, 5);
+  database.sqlite
+    .prepare("INSERT INTO credentials VALUES (?,?,?)")
+    .run("owner", 4, "synthetic-encrypted-record");
+  const restarted = Object.create(database) as SQLiteD1;
+  await ensureStorage(restarted.env(), schema);
+  assert.equal(
+    database.sqlite
+      .prepare("SELECT envelope FROM credentials WHERE owner_id=?")
+      .get("owner")?.envelope,
+    "synthetic-encrypted-record",
+  );
+  assert.equal(
+    database.sqlite
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all().length,
+    5,
+  );
+  database.sqlite.close();
+});
+
+test("incompatible D1 is reported without destructive changes or arbitrary migration SQL", async () => {
+  const database = new SQLiteD1(false);
+  database.sqlite.exec(
+    "CREATE TABLE credentials (original TEXT); INSERT INTO credentials VALUES ('preserved')",
+  );
+  const schema = readFileSync(
+    new URL("../schema.sql", import.meta.url),
+    "utf8",
+  );
+  await assert.rejects(
+    ensureStorage(database.env(), schema),
+    (error: any) => error.code === "STORAGE_SCHEMA_MISMATCH",
+  );
+  assert.equal(
+    database.sqlite.prepare("SELECT original FROM credentials").get()?.original,
+    "preserved",
+  );
+  await assert.rejects(
+    ensureStorage(database.env(), "DROP TABLE credentials"),
+    (error: any) => error.code === "CONFIGURATION_REQUIRED",
+  );
+  assert.equal(
+    database.sqlite.prepare("SELECT original FROM credentials").get()?.original,
+    "preserved",
+  );
+  database.sqlite.close();
+});
+
+test("failed D1 initialization can retry and does not expose database error contents", async () => {
+  const database = new SQLiteD1(false);
+  const batch = database.batch.bind(database);
+  let unavailable = true;
+  database.batch = async (statements) => {
+    if (unavailable) throw new Error("D1_ERROR: synthetic-private-detail");
+    return batch(statements);
+  };
+  const schema = readFileSync(
+    new URL("../schema.sql", import.meta.url),
+    "utf8",
+  );
+  await assert.rejects(
+    ensureStorage(database.env(), schema),
+    (error: any) =>
+      error.code === "STORAGE_UNAVAILABLE" &&
+      !error.message.includes("private-detail"),
+  );
+  unavailable = false;
+  await ensureStorage(database.env(), schema);
+  assert.equal(
+    database.sqlite.prepare("SELECT count(*) AS n FROM credentials").get()?.n,
+    0,
+  );
+  database.sqlite.close();
+});
 const owner = "synthetic-owner";
 const appleSession = (): AppleSession => ({
   login: loginAssurance(Date.now(), true),

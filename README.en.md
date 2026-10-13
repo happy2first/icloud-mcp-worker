@@ -33,6 +33,8 @@ Calendar and Contacts use an app-specific password entered in the management pag
 
 ## Deploy
 
+The first Access-authenticated API request initializes missing D1 tables using the same schema.sql embedded at build time. Reinitialization preserves existing credentials/sessions; incompatible existing columns require an explicit migration. Management status does not call Apple, and database errors are reported separately from Apple connection failures.
+
 Production deployment remains unverified. For Git-connected Cloudflare Workers Builds, use `npm run build` as the build command and `npm run deploy:cloud` as the deploy command. Wrangler reuses or provisions the named D1 database; the deploy script then applies the non-destructive initial schema. The tracked configuration no longer contains a placeholder database ID. The ignored local configuration below is not available to cloud builds. Set up a custom hostname and the two Access variables in the Dashboard, and store `ENCRYPTION_KEYS_JSON` as a runtime Worker Secret. The build token needs Worker deployment and D1 read/write permissions. See the [cloud deployment checklist](docs/USER-GUIDE.md#11-cloudflare-workers-builds从-github-部署).
 
 ```bash

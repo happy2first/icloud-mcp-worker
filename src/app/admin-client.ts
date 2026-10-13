@@ -55,6 +55,10 @@ export function mountAdmin(
       "Apple 接口返回未支持的协议，请记录错误代码并检查项目更新。",
     CONFIGURATION_REQUIRED:
       "Worker 配置尚未就绪，请检查 D1 绑定与加密 Secret，并部署最新代码。",
+    STORAGE_UNAVAILABLE:
+      "Worker 数据库访问或初始化失败，请检查 DB 绑定及 Cloudflare D1 状态；这不是 Apple 连接错误，已有数据无需删除。",
+    STORAGE_SCHEMA_MISMATCH:
+      "当前绑定的 D1 表结构不兼容，请核对数据库并执行对应迁移；不要删除已有数据或重新生成密钥。",
     OWNER_NOT_CONFIGURED: "管理员尚未配置 Access 身份与应用域名。",
     UNSUPPORTED_AUTH:
       "Apple 登录未启用或返回了未支持的验证方式，请检查配置与官方账户状态。",
@@ -63,6 +67,10 @@ export function mountAdmin(
     RESTART_REQUIRED: "本次授权需重试，请刷新状态后操作。",
   };
   const configurationHints: Record<string, string> = {
+    "Bind a D1 database as DB with session support.":
+      "请将 Cloudflare D1 数据库绑定为 DB。若已有绑定，请核对类型确为 D1，并部署最新 Worker。",
+    "The database initialization schema is missing. Rebuild the Worker.":
+      "构建产物缺少数据库初始化结构，请使用 npm run build 重新构建并部署。",
     "The runtime Secret ENCRYPTION_KEYS_JSON is missing.":
       "Worker 未读取到运行时 Secret ENCRYPTION_KEYS_JSON。请核对它是否配置在当前 Worker 的“变量和机密”，而不是仅配置在构建环境中，并重新部署；不要更换已有密钥。",
     "ENCRYPTION_KEYS_JSON must contain a 32-byte key encoded as Base64, without JSON or quotes.":
@@ -121,7 +129,9 @@ export function mountAdmin(
           "：" +
           (e.code === "CONFIGURATION_REQUIRED"
             ? (configurationHints[e.message] ?? hints.CONFIGURATION_REQUIRED)
-            : (hints[e.code] ?? e.message ?? "操作未完成。")) +
+            : e.code === "UPSTREAM_UNAVAILABLE" && path === "/api/admin/status"
+              ? "管理状态读取失败；此接口不请求 Apple，请记录请求编号并检查 Worker 数据库。"
+              : (hints[e.code] ?? e.message ?? "操作未完成。")) +
           (typeof e.requestId === "string" &&
           /^[a-f0-9-]{36}$/.test(e.requestId)
             ? " 请求编号：" + e.requestId + "。"

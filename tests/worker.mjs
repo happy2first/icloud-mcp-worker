@@ -2,7 +2,6 @@ import { Miniflare, Log, LogLevel } from "miniflare";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
 const origin = "https://worker.example.test",
   issuer = "https://synthetic-team.cloudflareaccess.com",
   owner = "synthetic-owner";
@@ -82,12 +81,6 @@ const mf = new Miniflare({
 });
 try {
   const db = await mf.getD1Database("DB");
-  const schema = await readFile("schema.sql", "utf8");
-  for (const sql of schema
-    .replace(/^--.*$/gm, "")
-    .split(";")
-    .filter((s) => s.trim()))
-    await db.prepare(sql).run();
   const signed = {
     "cf-access-jwt-assertion": await sign(owner),
     "oai-authenticated-user-id": "forged",
@@ -105,6 +98,14 @@ try {
         ? {}
         : { method: "POST", body: JSON.stringify(value) }),
     });
+  const firstStatus = await request("/api/admin/status");
+  assert.equal(firstStatus.status, 200, await firstStatus.clone().text());
+  assert.equal((await firstStatus.json()).web.state, "DISCONNECTED");
+  assert.equal(
+    calls.length,
+    0,
+    "First-run management status must not request Apple",
+  );
   assert.equal((await mf.dispatchFetch(origin + "/admin")).status, 401);
   assert.equal(
     (

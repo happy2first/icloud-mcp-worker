@@ -27,6 +27,7 @@ import { AppleConnectionService } from "./auth/service.ts";
 import { download } from "./services/downloads.ts";
 import client from "./client.generated.ts";
 import adminScript from "./admin.generated.ts";
+import { ensureStorage } from "./persistence/initialize.ts";
 const worker = {
   async fetch(request: Request, env: CloudflareAccessEnv) {
     return cloudflareAccessFetch(request, env, async (authenticated, env) => {
@@ -37,6 +38,7 @@ const worker = {
         const owner = requireOwner(authenticated, env);
         if (["/", "/admin"].includes(path) && authenticated.method === "GET")
           return adminPage(adminScript);
+        await ensureStorage(env);
         if (path.startsWith("/download/") && authenticated.method === "GET") {
           await rateLimit(env, owner);
           return await download(env, owner, path.slice(10));

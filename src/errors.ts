@@ -10,6 +10,8 @@ export type ErrorCode =
   | "UPSTREAM_UNAVAILABLE"
   | "RATE_LIMITED"
   | "CONFIGURATION_REQUIRED"
+  | "STORAGE_UNAVAILABLE"
+  | "STORAGE_SCHEMA_MISMATCH"
   | "CONFLICT"
   | "REAUTH_REQUIRED"
   | "VERIFICATION_REQUIRED"
@@ -68,15 +70,35 @@ export class WriteOutcomeUnknownError extends AppError {
 }
 
 export function publicError(error: unknown, requestId: string) {
+  // Classify known database failures without returning raw SQL, data or bindings.
+  const isStorageFailure = (value: unknown): boolean => {
+    if (!(value instanceof Error)) return false;
+    return (
+      /D1_ERROR|D1_EXEC_ERROR|SQLITE_|no such (?:table|column)|database is locked/i.test(
+        value.message,
+      ) ||
+      (value.cause instanceof Error &&
+        /D1_ERROR|D1_EXEC_ERROR|SQLITE_|no such (?:table|column)/i.test(
+          value.cause.message,
+        ))
+    );
+  };
   const e =
     error instanceof AppError
       ? error
-      : new AppError(
-          "UPSTREAM_UNAVAILABLE",
-          "This operation could not be completed. Try the connection again.",
-          503,
-          true,
-        );
+      : isStorageFailure(error)
+        ? new AppError(
+            "STORAGE_UNAVAILABLE",
+            "Worker database access failed. Check D1; this error does not indicate an Apple connection failure.",
+            503,
+            true,
+          )
+        : new AppError(
+            "UPSTREAM_UNAVAILABLE",
+            "This operation could not be completed. Try the connection again.",
+            503,
+            true,
+          );
   const retry =
     "retryAfterSeconds" in e
       ? e.retryAfterSeconds
