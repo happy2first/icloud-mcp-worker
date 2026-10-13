@@ -120,6 +120,7 @@ export class DavClient {
       ? AbortSignal.any([this.signal, AbortSignal.timeout(10000)])
       : AbortSignal.timeout(10000);
     const visited = new Set<string>();
+    let usedContactsRouteFallback = false;
     try {
       for (let hop = 0; hop < 4; hop++) {
         if (visited.has(url.href))
@@ -170,7 +171,25 @@ export class DavClient {
           throw new UpstreamRateLimitedError(
             retrySeconds(r.headers.get("retry-after")),
           );
+        // A numbered CardDAV host may fail Cloudflare DNS routing (HTTP 530).
+        // The fixed entry host also routes account paths. Keep the exact path
+        // and region; never guess a partition or retry a mutation.
+        if (r.status === 530 && this.kind === "contacts" &&
+          ["PROPFIND", "REPORT", "GET"].includes(method) &&
+          /^p\d{1,3}-contacts\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
+          !usedContactsRouteFallback && hop < 3) {
+          const entry = new URL(url);
+          entry.hostname = url.hostname.endsWith(".com.cn")
+            ? "contacts.icloud.com.cn" : "contacts.icloud.com";
+          if (!visited.has(entry.href)) {
+            usedContactsRouteFallback = true;
+            await r.body?.cancel();
+            url = davURL(entry.href, this.kind);
+            continue;
+          }
+        }
         if (!r.ok) {
+          await r.body?.cancel();
           if (method === "PUT" || method === "DELETE")
             throw new AppError(
               "WRITE_OUTCOME_UNKNOWN",
@@ -179,7 +198,7 @@ export class DavClient {
             );
           throw new AppError(
             "UPSTREAM_UNAVAILABLE",
-            `DAV ${this.kind} ${method}: Apple returned HTTP ${r.status}.`,
+            `DAV ${this.kind} ${method}: ${url.hostname} returned HTTP ${r.status}${r.status === 530 ? " (possible upstream DNS/routing failure; not a password rejection)" : ""}.`,
             503,
             true,
           );
@@ -200,18 +219,25 @@ export class DavClient {
           : "UPSTREAM_UNAVAILABLE",
         method === "PUT" || method === "DELETE"
           ? "Write outcome unknown. Read the exact resource before retrying."
-          : `DAV ${this.kind} ${method}: ${signal.aborted ? "request budget exceeded" : "network connection failed"}. Retry later.`,
+          : `DAV ${this.kind} ${method}: ${url.hostname}: ${signal.aborted ? "request budget exceeded" : "network connection failed"}. Retry later.`,
         503,
       );
     }
   }
-  async propfind(url: string, props: string, depth = "0") {
-    const r = await this.request(
+  async propfind(url: string, props: string, depth = "0", stage = "resource") {
+    let r;
+    try {
+      r = await this.request(
       url,
       "PROPFIND",
       `<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:a="urn:ietf:params:xml:ns:carddav"><d:prop>${props}</d:prop></d:propfind>`,
       { Depth: depth },
-    );
+      );
+    } catch (e) {
+      if (e instanceof AppError)
+        e.message = `DAV ${this.kind} discovery/${stage}: ${e.message}`;
+      throw e;
+    }
     return parseMulti(r.text).map((x: any) => ({
       ...x,
       href: davURL(new URL(x.href, r.url).href, this.kind).href,
@@ -231,12 +257,19 @@ export class DavClient {
         : "https://contacts.icloud.com/";
     let principal;
     try {
-      principal = await this.propfind(root, "<d:current-user-principal/>");
+      principal = await this.propfind(root, "<d:current-user-principal/>", "0", "principal-entry");
     } catch (e) {
       // Chinese CardDAV accounts may require the regional bootstrap directly.
       // Do not retry writes, protocol errors, rate limits or arbitrary endpoints.
       if (!(e instanceof AppError) || !["REAUTH_REQUIRED", "FORBIDDEN", "UPSTREAM_UNAVAILABLE"].includes(e.code) || this.signal?.aborted) throw e;
-      principal = await this.propfind(root.replace(".com/", ".com.cn/"), "<d:current-user-principal/>");
+      try {
+        principal = await this.propfind(root.replace(".com/", ".com.cn/"), "<d:current-user-principal/>", "0", "regional-principal-entry");
+      } catch (regional) {
+        // Do not hide the first failure behind an unrelated regional DNS error.
+        if (regional instanceof AppError)
+          regional.message = `${regional.message} Initial entry: ${e.message}`;
+        throw regional;
+      }
     }
     const principalRecord = principal.find((x: any) => x.props["current-user-principal"]?.href);
     const href = principalRecord?.props["current-user-principal"]?.href;
@@ -247,6 +280,7 @@ export class DavClient {
       this.kind === "calendar"
         ? "<c:calendar-home-set/>"
         : "<a:addressbook-home-set/>",
+      "0", "home-set",
     );
     const homeProperty = this.kind === "calendar" ? "calendar-home-set" : "addressbook-home-set";
     const homeRecord = home.find((x: any) => x.props[homeProperty]?.href);
@@ -261,6 +295,7 @@ export class DavClient {
       resolved,
       "<d:displayname/><d:resourcetype/>",
       "1",
+      "collections",
     );
     return {
       collections: collections

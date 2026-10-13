@@ -70,3 +70,48 @@ test("DAV failures distinguish HTTP, network and redirect errors without raw sec
       e.code === code && e.message.includes(detail) && !e.message.includes("sentinel"));
   }
 });
+
+for (const region of ["com", "com.cn"]) {
+  test(`CardDAV partition HTTP 530 uses same-region entry and preserves account path (${region})`, async () => {
+    const seen: string[] = [];
+    const client = new DavClient("contacts", creds, async (url, init) => {
+      seen.push(String(url));
+      assert.equal(init?.method, "PROPFIND");
+      assert.equal((init?.headers as any).Depth, "1");
+      if (seen.length === 1) return new Response("error code: 1016 secret-sentinel", { status: 530 });
+      return response("/123/carddavhome/card/", '<resourcetype><a:addressbook xmlns:a="urn:ietf:params:xml:ns:carddav"/></resourcetype>');
+    });
+    const records = await client.propfind(`https://p209-contacts.icloud.${region}/123/carddavhome/`, "<d:resourcetype/>", "1", "collections");
+    assert.deepEqual(seen, [`https://p209-contacts.icloud.${region}/123/carddavhome/`, `https://contacts.icloud.${region}/123/carddavhome/`]);
+    assert.equal(records[0].href, `https://contacts.icloud.${region}/123/carddavhome/card/`);
+  });
+}
+
+test("CardDAV routing fallback cannot loop back or retry writes", async () => {
+  const partition = "https://p209-contacts.icloud.com.cn/123/carddavhome/";
+  let seen = 0;
+  const client = new DavClient("contacts", creds, async () => ++seen === 1
+    ? new Response(null, { status: 530 })
+    : new Response(null, { status: 307, headers: { location: partition } }));
+  await assert.rejects(client.propfind(partition, "<d:resourcetype/>", "1", "collections"), (e: any) => e.code === "APPLE_REDIRECT_ERROR" && e.message.includes("collections"));
+  assert.equal(seen, 2);
+  seen = 0;
+  const writer = new DavClient("contacts", creds, async () => { seen++; return new Response(null, { status: 530 }); });
+  await assert.rejects(writer.put(partition + "one.vcf", "data"), (e: any) => e.code === "WRITE_OUTCOME_UNKNOWN");
+  assert.equal(seen, 1);
+});
+
+test("discovery preserves both entry failures with safe hosts and stages", async () => {
+  const client = new DavClient("contacts", creds, async url => new Response("secret-sentinel", { status: String(url).includes(".com.cn") ? 530 : 403 }));
+  await assert.rejects(client.discover(), (e: any) => e.code === "UPSTREAM_UNAVAILABLE" &&
+    e.message.includes("regional-principal-entry") && e.message.includes("contacts.icloud.com.cn") &&
+    e.message.includes("HTTP 530") && e.message.includes("Initial entry:") &&
+    e.message.includes("principal-entry") && !e.message.includes("sentinel") && !e.message.includes(creds.password));
+});
+
+test("discovery stage annotation preserves rate limit metadata and prevents regional retry", async () => {
+  let seen = 0;
+  const client = new DavClient("contacts", creds, async () => { seen++; return new Response(null, { status: 429, headers: { "retry-after": "120" } }); });
+  await assert.rejects(client.discover(), (e: any) => e.code === "RATE_LIMITED" && e.retryAfterSeconds === 120);
+  assert.equal(seen, 1);
+});
