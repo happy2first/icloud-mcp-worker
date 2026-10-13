@@ -27,6 +27,8 @@ import { b64 } from "../src/crypto/bytes.ts";
 import { webOperation } from "../src/services/web.ts";
 import { ensureStorage } from "../src/persistence/initialize.ts";
 
+import { checkScopes, savedChecks, saveCheck } from "../src/services/checks.ts";
+
 // Real SQLite executes repository SQL. This adapter models D1's transactional batch.
 // The produced Worker is separately tested in workerd with real D1 bindings.
 class SQLiteD1 {
@@ -52,6 +54,11 @@ class SQLiteD1 {
           const result = source.sqlite.prepare(sql).get(...params);
           if (source.afterStatement) await source.afterStatement(sql);
           return (result as T) ?? null;
+        },
+        async all<T>() {
+          const results = source.sqlite.prepare(sql).all(...params);
+          if (source.afterStatement) await source.afterStatement(sql);
+          return { results: results as T[] };
         },
         async run() {
           const result = source.sqlite.prepare(sql).run(...params);
@@ -96,7 +103,7 @@ test("first-run D1 schema initializes once under concurrency and preserves encry
   await Promise.all(
     Array.from({ length: 4 }, () => ensureStorage(database.env(), schema)),
   );
-  assert.equal(creates, 5);
+  assert.equal(creates, 6);
   database.sqlite
     .prepare("INSERT INTO credentials VALUES (?,?,?)")
     .run("owner", 4, "synthetic-encrypted-record");
@@ -112,7 +119,7 @@ test("first-run D1 schema initializes once under concurrency and preserves encry
     database.sqlite
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all().length,
-    5,
+    6,
   );
   database.sqlite.close();
 });
@@ -3042,5 +3049,72 @@ test("direct all-open resumes its original list selection without rediscovery af
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     db.sqlite.close();
+  }
+});
+
+test("saved connection results are owner scoped and invalidated even when a removed credential reuses its version", async () => {
+  const database = new SQLiteD1();
+  const env = testEnv(database, key());
+  try {
+    database.sqlite
+      .prepare("INSERT INTO credentials VALUES(?,?,?)")
+      .run("owner", 1, "encrypted-one");
+    const scope = (await checkScopes(env, "owner")).calendar;
+    await saveCheck(env, "owner", "calendar", scope, {
+      state: "ok",
+      checkedAt: 100,
+    });
+    assert.equal((await savedChecks(env, "owner")).calendar?.state, "ok");
+    assert.equal((await savedChecks(env, "other")).calendar, null);
+    await saveCheck(env, "owner", "calendar", scope, {
+      state: "error",
+      checkedAt: 90,
+    });
+    assert.equal((await savedChecks(env, "owner")).calendar?.state, "ok");
+    database.sqlite
+      .prepare("DELETE FROM credentials WHERE owner_id=?")
+      .run("owner");
+    assert.equal((await savedChecks(env, "owner")).calendar, null);
+    database.sqlite
+      .prepare("INSERT INTO credentials VALUES(?,?,?)")
+      .run("owner", 1, "encrypted-two");
+    assert.equal((await savedChecks(env, "owner")).calendar?.state, "stale");
+  } finally {
+    database.sqlite.close();
+  }
+});
+
+test("web connection results expire on account replacement and late old checks cannot overwrite the new scope", async () => {
+  const database = new SQLiteD1();
+  const envelopes = key();
+  const env = testEnv(database, envelopes);
+  const repo = new AppleSessionRepository(env, owner);
+  try {
+    let fence = await repo.begin(0);
+    await repo.commit(fence, appleSession(), "READY");
+    const oldScope = (await checkScopes(env, owner)).photos;
+    await saveCheck(env, owner, "photos", oldScope, {
+      state: "ok",
+      checkedAt: 100,
+    });
+    assert.equal((await savedChecks(env, owner)).photos?.state, "ok");
+    const before = await repo.status();
+    fence = await repo.begin(before.generation);
+    await repo.commit(fence, appleSession(), "READY");
+    assert.equal((await savedChecks(env, owner)).photos?.state, "stale");
+    const newScope = (await checkScopes(env, owner)).photos;
+    await saveCheck(env, owner, "photos", newScope, {
+      state: "ok",
+      checkedAt: 200,
+    });
+    await saveCheck(env, owner, "photos", oldScope, {
+      state: "error",
+      checkedAt: 300,
+    });
+    assert.equal((await savedChecks(env, owner)).photos?.checkedAt, 200);
+    await repo.disconnect();
+    assert.equal((await savedChecks(env, owner)).photos, null);
+  } finally {
+    database.sqlite.close();
   }
 });

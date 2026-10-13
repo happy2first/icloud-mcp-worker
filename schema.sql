@@ -20,3 +20,5 @@ CREATE TABLE IF NOT EXISTS credentials (owner_id TEXT PRIMARY KEY, version INTEG
 CREATE TABLE IF NOT EXISTS service_config (owner_id TEXT NOT NULL, service TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, writable INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(owner_id,service));
 CREATE TABLE IF NOT EXISTS request_limits (owner_id TEXT PRIMARY KEY, window INTEGER NOT NULL, count INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS download_tickets (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, expires_at INTEGER NOT NULL, envelope TEXT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS service_checks (owner_id TEXT NOT NULL, service TEXT NOT NULL, scope TEXT NOT NULL, checked_at INTEGER NOT NULL, result TEXT NOT NULL, PRIMARY KEY(owner_id,service));

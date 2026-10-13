@@ -26,6 +26,7 @@ const base = () => ({
     enabled: false,
     writable: false,
     credentialAvailable: true,
+    connection: null as any,
     pcsReady: service === "calendar" || service === "contacts" ? null : false,
   })),
   pcsProgress: {},
@@ -36,11 +37,16 @@ async function setup(send?: typeof fetch, confirm = () => true) {
     value: { origin: "https://synthetic.test" },
   });
   const state = base(),
-    requests: any[] = [];
+    requests: any[] = [],
+    copied: string[] = [];
   const backend = async (path: any, init: any) => {
     requests.push({ path, init });
     if (path === "/api/admin/status") return Response.json(state);
     const value = JSON.parse(init.body);
+    if (path === "/api/admin/credentials") {
+      state.dav.configured = true;
+      state.dav.version++;
+    }
     if (path === "/api/admin/service")
       Object.assign(
         state.services.find((s) => s.service === value.service)!,
@@ -52,6 +58,9 @@ async function setup(send?: typeof fetch, confirm = () => true) {
     document as unknown as Document,
     send ?? (backend as any),
     confirm,
+    async (text) => {
+      copied.push(text);
+    },
   );
   const settle = async () => {
     for (let i = 0; i < 100 && ui.busy; i++)
@@ -59,7 +68,7 @@ async function setup(send?: typeof fetch, confirm = () => true) {
     assert.equal(ui.busy, false);
   };
   const el = (id: string) => document.getElementById(id)! as any;
-  return { document, window, ui, state, requests, el, settle };
+  return { document, window, ui, state, requests, copied, el, settle };
 }
 test("management locks actions until status is loaded and uses seven accessible service cards", async () => {
   let resolve!: (r: Response) => void;
@@ -110,7 +119,7 @@ test("configuration failure identifies the Secret, clears loading text and recov
     await h.settle();
     assert.match(h.el("notice").textContent, /ENCRYPTION_KEYS_JSON.*44/);
     assert.match(h.el("notice").textContent, /edcaa17a/);
-    assert.match(h.el("web-state").textContent, /状态读取失败/);
+    assert.match(h.el("web-state").textContent, /读取失败/);
     assert.ok(!h.el("web-state").textContent.includes("正在读取"));
     assert.equal(h.el("connect").getAttribute("aria-disabled"), "true");
     assert.equal(h.el("refresh").disabled, false);
@@ -189,33 +198,44 @@ test("app password paste normalizes groups, clears the input and sends the curre
     h.ui.destroy();
   }
 });
-test("PCS waiting buttons reflect persisted per-service delay without polling Apple", async () => {
+test("pending connection cooldown uses one continuation button and never polls Apple", async () => {
   const h = await setup();
   try {
     await h.settle();
-    (h.state.pcsProgress as any).photos = {
+    const photo = h.state.services.find((s) => s.service === "photos")!;
+    photo.enabled = true;
+    photo.connection = {
+      state: "pending",
+      checkedAt: Date.now(),
       nextAttemptAt: Date.now() + 60000,
-      expiresAt: Date.now() + 600000,
-      exhausted: false,
+      action: "wait-for-reminders-keys",
     };
     h.el("refresh").click();
     await h.settle();
     const button = h.document.querySelector(
-      'button[data-service="photos"][data-kind="pcs"]',
+      'button[data-service="photos"][data-kind="check"]',
     ) as any;
     assert.equal(button.disabled, true);
     assert.match(button.textContent, /等待.*秒/);
+    assert.equal(h.document.querySelectorAll('[data-kind="pcs"]').length, 0);
+    photo.connection.nextAttemptAt = 0;
+    h.el("refresh").click();
+    await h.settle();
     const ready = h.document.querySelector(
-      'button[data-service="notes"][data-kind="pcs"]',
+      'button[data-service="photos"][data-kind="check"]',
     ) as any;
     assert.equal(ready.disabled, false);
+    assert.equal(ready.textContent, "继续验证");
     ready.click();
     await h.settle();
     assert.equal(
-      h.requests.filter((r) => r.path === "/api/admin/pcs").length,
+      h.requests.filter((r) => r.path === "/api/admin/check").length,
       1,
     );
-    assert.match(h.el("notice").textContent, /iPhone/);
+    assert.equal(
+      h.requests.filter((r) => r.path === "/api/admin/pcs").length,
+      0,
+    );
   } finally {
     h.ui.destroy();
   }
@@ -326,3 +346,120 @@ test("homepage explains authorization plainly, includes Find My and keeps unappr
     h.ui.destroy();
   }
 });
+
+test("saved credentials collapse until editing, while missing credentials show their form", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    assert.equal(h.el("web-state").textContent, "已保存");
+    assert.equal(h.el("dav-state").textContent, "已保存");
+    assert.equal(h.el("dav-entry").hidden, true);
+    h.el("edit-dav").click();
+    assert.equal(h.el("dav-entry").hidden, false);
+    h.el("password").value = "synthetic";
+    h.el("cancel-dav").click();
+    assert.equal(h.el("dav-entry").hidden, true);
+    assert.equal(h.el("password").value, "");
+    h.state.dav.configured = false;
+    h.el("refresh").click();
+    await h.settle();
+    assert.equal(h.el("dav-entry").hidden, false);
+    assert.equal(h.el("dav-state").textContent, "未保存");
+    assert.ok(h.el("credentials-card").contains(h.el("web-state")));
+    assert.ok(h.el("credentials-card").contains(h.el("dav-state")));
+  } finally {
+    h.ui.destroy();
+  }
+});
+test("enabled web services can check without a manual authorization prerequisite", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    const s = h.state.services.find((s) => s.service === "notes")!;
+    s.enabled = true;
+    s.pcsReady = false;
+    h.el("refresh").click();
+    await h.settle();
+    assert.equal(
+      (
+        h.document.querySelector(
+          'button[data-service="notes"][data-kind="check"]',
+        ) as any
+      ).disabled,
+      false,
+    );
+    assert.equal(h.document.querySelectorAll('[data-kind="pcs"]').length, 0);
+    assert.ok(!h.document.body.textContent.includes("ChatGPT"));
+  } finally {
+    h.ui.destroy();
+  }
+});
+test("copy buttons preserve dynamic endpoint and complete result text", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    h.el("copy-mcp").click();
+    await Promise.resolve();
+    assert.equal(h.copied[0], "https://synthetic.test/mcp");
+    h.el("copy-result").click();
+    await Promise.resolve();
+    assert.equal(h.copied[1], h.el("notice").textContent);
+  } finally {
+    h.ui.destroy();
+  }
+});
+test("service results survive status reload with timestamps and no repeated credential labels", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    h.state.services[0].enabled = true;
+    h.state.services[0].connection = { state: "ok", checkedAt: Date.now() };
+    h.el("refresh").click();
+    await h.settle();
+    const card = h.document.querySelector('article[data-service="calendar"]')!;
+    assert.ok(card.textContent.includes("连接正常"));
+    assert.ok(card.textContent.includes("上次检查"));
+    assert.ok(!card.textContent.includes("专用密码已保存"));
+    h.state.services[0].connection = null;
+    h.el("refresh").click();
+    await h.settle();
+    assert.ok(
+      h.document
+        .querySelector('article[data-service="calendar"]')!
+        .textContent.includes("尚未检查"),
+    );
+  } finally {
+    h.ui.destroy();
+  }
+});
+for (const code of ["VERIFICATION_REQUIRED", "UNSUPPORTED_FEATURE"])
+  test(`detailed ${code} can be copied intact`, async () => {
+    const state = base();
+    state.services.find((s) => s.service === "photos")!.enabled = true;
+    const error = {
+      code,
+      message:
+        "Apple requestWebAccessState: HTTP 412; hsaChallengeRequired=true",
+      requestId: "6bfd26a2-d301-4e38-ada4-57125c1c448a",
+    };
+    const h = await setup((async (path: any) =>
+      path === "/api/admin/status"
+        ? Response.json(state)
+        : Response.json({ error }, { status: 409 })) as typeof fetch);
+    try {
+      await h.settle();
+      (
+        h.document.querySelector(
+          'button[data-service="photos"][data-kind="check"]',
+        ) as any
+      ).click();
+      await h.settle();
+      assert.ok(h.el("notice").textContent.includes(error.message));
+      h.el("copy-result").click();
+      await Promise.resolve();
+      assert.ok(h.copied[0].includes(error.requestId));
+      assert.ok(h.copied[0].includes(error.message));
+    } finally {
+      h.ui.destroy();
+    }
+  });

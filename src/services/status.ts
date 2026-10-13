@@ -1,7 +1,8 @@
 import type { RuntimeEnv } from "../platform/sites.ts";
-import { configs, credentialStatus } from "./config.ts";
+import { configs, credentialStatus, db } from "./config.ts";
 import { AppleConnectionService } from "../auth/service.ts";
 import { AppleSessionRepository } from "../persistence/apple-sessions.ts";
+import { savedChecks } from "./checks.ts";
 export async function serviceStatus(env: RuntimeEnv, owner: string) {
   const web = await new AppleConnectionService(env, owner).status();
   const permissions = await configs(env, owner);
@@ -19,6 +20,14 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
   ] as const)
     web.capabilities[key] = web.capabilities[key] && reminders.enabled;
   const dav = await credentialStatus(env, owner);
+  const connections = await savedChecks(env, owner);
+  const retained = await db(env)
+    .prepare(
+      "SELECT envelope FROM apple_session_state WHERE owner_id=? AND account_id=?",
+    )
+    .bind(owner, "apple-reminders")
+    .first<{ envelope: string | null }>();
+  const webCredentialSaved = !!retained?.envelope;
   let pcs: Record<string, boolean> = {};
   let webSessionAvailable = false;
   const pcsProgress: Record<
@@ -50,11 +59,16 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
   return {
     web,
     webSessionAvailable,
+    webCredentialSaved,
     dav,
     pcsProgress,
     services: [
       ...permissions.map((c) => ({
         ...c,
+        connection: connections[c.service],
+        requiresVerification:
+          !["calendar", "contacts"].includes(c.service) &&
+          ["verify-device", "apple-sign-in"].includes(web.requiredAction ?? ""),
         credentialAvailable: ["calendar", "contacts"].includes(c.service)
           ? dav.configured
           : webSessionAvailable,
@@ -72,6 +86,10 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
       })),
       {
         service: "findmy",
+        connection: connections.findmy,
+        requiresVerification: ["verify-device", "apple-sign-in"].includes(
+          web.requiredAction ?? "",
+        ),
         enabled: webSessionAvailable,
         writable: false,
         credentialAvailable: webSessionAvailable,

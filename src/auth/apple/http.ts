@@ -358,23 +358,23 @@ export class AppleAuthHTTP {
       );
     return reply;
   }
-  expect(reply: AppleReply, allowed: number[]) {
+  expect(reply: AppleReply, allowed: number[], stage = "authentication") {
     if (allowed.includes(reply.status)) return;
     if ([401, 403, 421, 450].includes(reply.status))
       throw new AppError(
         "REAUTH_REQUIRED",
-        "Apple did not accept this authentication step. Restart setup or resolve the account condition through Apple.",
+        `Apple ${stage}: HTTP ${reply.status}; authentication rejected.`,
         409,
       );
     if (reply.status === 412)
       throw new AppError(
         "VERIFICATION_REQUIRED",
-        "Apple rejected this verification attempt. Restart sign-in.",
+        `Apple ${stage}: HTTP 412; hsaChallengeRequired=${safeFlag(reply.body?.hsaChallengeRequired)}; hsaTrustedBrowser=${safeFlag(reply.body?.hsaTrustedBrowser)}. Device verification required.`,
         409,
       );
     throw new AppError(
       reply.status >= 500 ? "UPSTREAM_UNAVAILABLE" : "PROTOCOL_CHANGED",
-      "Apple returned an unsupported response for this step.",
+      `Apple ${stage}: unsupported HTTP ${reply.status} response.`,
       reply.status >= 500 ? 503 : 422,
       reply.status >= 500,
     );
@@ -405,7 +405,7 @@ export class AppleAuthHTTP {
     if (reply.status === 412 || body?.hsaChallengeRequired === true)
       throw new AppError(
         "VERIFICATION_REQUIRED",
-        "Apple requires device verification. Use the secure connection form.",
+        `Apple ${exchange ? "account-login" : "session-validation"} (${this.region}): HTTP ${reply.status}; hsaChallengeRequired=${safeFlag(body?.hsaChallengeRequired)}; hsaTrustedBrowser=${safeFlag(body?.hsaTrustedBrowser)}. Fresh device verification required; saved connection preserved.`,
         409,
       );
     if ([401, 421, 450].includes(reply.status))
@@ -434,7 +434,10 @@ export class AppleAuthHTTP {
       ].includes(String(body.serverErrorCode).toUpperCase());
     if (explicitRejection) throw new AppleAuthenticationError(exchange);
     try {
-      requireNoAppleRejection(body);
+      requireNoAppleRejection(
+        body,
+        exchange ? "account-login" : "session-validation",
+      );
     } catch (error) {
       if (
         !(error instanceof AppError) ||
@@ -530,7 +533,9 @@ export class AppleAuthHTTP {
     > = {};
     const ws = object(body?.webservices);
     for (const key of ["ckdatabasews", "drivews", "docws", "fmip"] as const) {
-      const value = object(ws?.[key])?.url;
+      const value =
+        object(ws?.[key])?.url ??
+        (key === "fmip" ? object(ws?.findme)?.url : undefined);
       if (typeof value === "string") {
         try {
           const url = new URL(value);
@@ -590,7 +595,7 @@ export class AppleAuthHTTP {
         "Review Apple's updated terms in the official iCloud interface before reconnecting.",
         409,
       );
-    requireNoAppleRejection(body);
+    requireNoAppleRejection(body, "account-login");
     if (body?.hsaChallengeRequired === true || body?.hsaTrustedBrowser !== true)
       throw new AppError(
         "VERIFICATION_REQUIRED",

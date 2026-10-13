@@ -1,17 +1,20 @@
-import { pageStyles } from "./ui/styles.ts";
+import { pageStyles, adminStyles } from "./ui/styles.ts";
+const copyIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg>`;
 export function adminPage(adminScript = "") {
   const nonce = btoa(
     String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24))),
   );
   return new Response(
-    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>iCloud MCP 管理</title><style nonce="${nonce}">${pageStyles}</style></head><body class="admin-page"><main>
-<h1>iCloud 服务</h1><p>登录账户，选择需要连接到 ChatGPT 的服务。</p>
-<div id="notice" class="message" role="status" aria-live="polite" tabindex="-1">正在读取配置…</div>
-<section><h2>Apple 账户</h2><p>用于提醒事项、备忘录、照片、云盘和查找。</p><p id="web-state">正在读取…</p><p id="expiry" class="muted"></p><div class="actions"><a class="button" id="connect" href="/connect/apple">登录 Apple 账户</a><button id="disconnect" class="danger" disabled>退出登录</button></div><p><small>登录后，在服务卡片中授权访问。</small></p></section>
-<section><h2>日历与通讯录</h2><p>这两项服务需要 App 专用密码。</p><p id="dav-state">正在读取…</p><form id="dav"><fieldset id="dav-fields" disabled><label for="account">Apple 账户邮箱</label><input id="account" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="320" required><label for="password">App 专用密码</label><input id="password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" placeholder="xxxx-xxxx-xxxx-xxxx" aria-describedby="password-help" required><p id="password-help"><small>支持直接粘贴专用密码。</small></p><div class="actions"><button id="save" type="submit">保存</button></div></fieldset></form><div class="actions"><a class="button secondary" href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">获取专用密码</a><button id="remove" class="danger" disabled>移除密码</button></div><p><small>生成位置：Apple 账户 → 登录与安全 → App 专用密码。</small></p></section>
-<section><h2>服务</h2><p>开启服务 → 授权访问 → 检查连接。日历、通讯录和查找无需单独授权。</p><div id="services" aria-busy="true"></div></section>
-<section><h2>连接 ChatGPT</h2><label for="mcp-url">MCP 地址</label><input id="mcp-url" readonly aria-label="MCP 地址"><p>添加自定义 MCP 应用，填写此地址并选择 OAuth。</p></section>
-<section><h2>状态</h2><button id="refresh" class="secondary">刷新状态</button><details><summary>技术详情</summary><pre id="status"></pre></details></section>
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>iCloud MCP 管理</title><style nonce="${nonce}">${pageStyles}${adminStyles}</style></head><body class="admin-page"><main>
+<header class="page-header"><div><h1>iCloud MCP</h1><p>凭证与服务管理</p></div><button id="refresh" class="secondary" title="重新读取保存状态，不检查 Apple 连接">刷新页面状态</button></header>
+<div class="mcp-bar"><label for="mcp-url">MCP 地址</label><input id="mcp-url" readonly aria-label="MCP 地址"><button id="copy-mcp" class="icon-button" aria-label="复制 MCP 地址" title="复制 MCP 地址">${copyIcon}</button><span id="copy-feedback" role="status"></span></div>
+<div class="result-box"><div id="notice" role="status" aria-live="polite" tabindex="-1">正在读取状态…</div><button id="copy-result" class="icon-button" aria-label="复制操作结果" title="复制操作结果">${copyIcon}</button></div>
+<section id="credentials-card"><div class="section-heading"><h2>凭证管理</h2><small>保存状态与服务连接结果分别显示</small></div><div class="credential-grid">
+<article class="credential-card"><div class="credential-heading"><h3>Apple 网页登录</h3><span id="web-state" class="credential-status">正在读取…</span></div><p>提醒事项、备忘录、照片、云盘、查找</p><p id="expiry" class="muted"></p><div class="actions"><a class="button" id="connect" href="/connect/apple">登录 Apple</a><button id="disconnect" class="danger" disabled>移除</button></div></article>
+<article class="credential-card"><div class="credential-heading"><h3>App 专用密码</h3><span id="dav-state" class="credential-status">正在读取…</span></div><p>日历、通讯录</p><div id="dav-saved-actions" class="actions" hidden><button id="edit-dav" class="secondary">更新凭证</button><button id="remove" class="danger" disabled>移除</button></div><div id="dav-entry" hidden><form id="dav"><fieldset id="dav-fields" disabled><label for="account">Apple 账户邮箱</label><input id="account" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="320" required><label for="password">App 专用密码</label><input id="password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" placeholder="xxxx-xxxx-xxxx-xxxx" required><div class="actions"><button id="save" type="submit">保存</button><button id="cancel-dav" type="button" class="secondary" hidden>取消</button></div></fieldset></form><a class="help-link" href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">获取 App 专用密码</a></div></article>
+</div></section>
+<section><div class="section-heading"><h2>服务连接</h2><small>显示上次检查结果，不是实时监测</small></div><div id="services" aria-busy="true"></div></section>
+<details class="technical"><summary>技术详情</summary><pre id="status"></pre></details>
 <noscript><p>请启用 JavaScript 后再配置。未启用时不会提交密码。</p></noscript></main><script nonce="${nonce}">${adminScript}</script></body></html>`,
     {
       headers: {

@@ -5,6 +5,7 @@ import type { RuntimeEnv } from "../platform/sites.ts";
 declare const __D1_SCHEMA_SQL__: string;
 const initialized = new WeakMap<object, Promise<void>>();
 const checks = [
+  "SELECT owner_id,service,scope,checked_at,result FROM service_checks LIMIT 0",
   "SELECT owner_id,account_id,generation,version,state,action,next_attempt_at,envelope,transaction_id,transaction_expires_at,resume_id,resume_expires_at,updated_at FROM apple_session_state LIMIT 0",
   "SELECT owner_id,version,envelope FROM credentials LIMIT 0",
   "SELECT owner_id,service,enabled,writable FROM service_config LIMIT 0",
@@ -41,7 +42,7 @@ export async function ensureStorage(
       // Only additive first-install DDL; never overwrite/delete credentials or alter
       // existing columns automatically. Future schema changes need explicit migrations.
       if (
-        statements.length !== 5 ||
+        statements.length !== 6 ||
         statements.some((sql) => !/^CREATE TABLE IF NOT EXISTS\s/i.test(sql))
       )
         throw new AppError(

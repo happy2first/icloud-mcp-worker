@@ -75,6 +75,16 @@ const mf = new Miniflare({
         ],
       });
     }
+    if (
+      u.hostname === "setup.icloud.com" &&
+      u.pathname.endsWith("/requestWebAccessState")
+    )
+      return Response.json({ isICDRSDisabled: false });
+    if (
+      u.hostname === "p12-drivews.icloud.com" &&
+      u.pathname === "/retrieveItemDetailsInFolders"
+    )
+      return Response.json([{ status: "OK", items: [] }]);
     throw new Error("Unexpected outbound request (network disabled).");
   },
   log: new Log(LogLevel.ERROR),
@@ -365,7 +375,10 @@ try {
       login: loginAssurance(),
       auth: { clientId: "synthetic-client", headers: {}, cookies: [] },
       connection: {
-        services: { fmip: "https://p12-fmipweb.icloud.com" },
+        services: {
+          fmip: "https://p12-fmipweb.icloud.com",
+          drivews: "https://p12-drivews.icloud.com",
+        },
         dsid: "123",
         clientId: "synthetic-client",
         clientBuildNumber: "test",
@@ -407,7 +420,34 @@ try {
   assert.equal((await findmyCheck.json()).liveReadPassed, true);
   // Never send a synthetic or real sound during integration verification.
   assert.ok(!calls.some((c) => c.url.endsWith("playSound")));
+  const beforeStatus = calls.length;
   const independentStatus = await (await request("/api/admin/status")).json();
+  assert.equal(calls.length, beforeStatus);
+  assert.equal(
+    independentStatus.services.find((s) => s.service === "findmy").connection
+      .state,
+    "ok",
+  );
+  await request("/api/admin/service", {
+    service: "drive",
+    enabled: true,
+    writable: false,
+  });
+  const beforeAutoCheck = calls.length;
+  const autoCheck = await request("/api/admin/check", { service: "drive" });
+  assert.equal(autoCheck.status, 200, await autoCheck.clone().text());
+  assert.equal((await autoCheck.json()).liveReadPassed, true);
+  assert.equal(calls.length - beforeAutoCheck, 2);
+  const autoStatus = await (await request("/api/admin/status")).json();
+  assert.equal(
+    autoStatus.services.find((s) => s.service === "drive").connection.state,
+    "ok",
+  );
+  assert.equal(
+    autoStatus.services.find((s) => s.service === "drive").pcsReady,
+    true,
+  );
+
   assert.equal(independentStatus.webSessionAvailable, true);
   assert.equal(
     independentStatus.services.find((s) => s.service === "reminders").pcsReady,

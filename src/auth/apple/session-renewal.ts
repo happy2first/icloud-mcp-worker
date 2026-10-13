@@ -36,6 +36,7 @@ export const RenewalCheckpointSchema = z
         "retry",
       ])
       .nullable(),
+    lastErrorMessage: z.string().max(2000).optional(),
     lastErrorCode: z
       .enum([
         "REAUTH_REQUIRED",
@@ -134,7 +135,8 @@ function pendingError(metadata: RenewalCheckpoint, now: number) {
   if (metadata.requiredAction === "verify-device")
     return new AppError(
       "VERIFICATION_REQUIRED",
-      "Apple requires fresh device verification. Use the secure connection form.",
+      metadata.lastErrorMessage ??
+        "Saved-session checkpoint: verify-device. No Apple request was made on this attempt; the prior failure has no detailed diagnostic. Sign in again to establish a freshly verified session.",
       409,
     );
   if (metadata.nextRetryAt !== null && now < metadata.nextRetryAt)
@@ -338,6 +340,7 @@ export class AppleSessionRenewal {
               nextRetryAt,
               requiredAction,
               lastErrorCode: code.data,
+              lastErrorMessage: safe.message.slice(0, 2000),
             },
           },
           saved.state,

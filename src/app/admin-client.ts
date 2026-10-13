@@ -1,4 +1,13 @@
+type Connection = {
+  state: "ok" | "error" | "pending" | "stale";
+  checkedAt: number;
+  error?: { code: string; message: string; requestId: string };
+  action?: string;
+  nextAttemptAt?: number;
+};
 type Service = {
+  connection?: Connection | null;
+  requiresVerification?: boolean;
   service: string;
   enabled: boolean;
   writable: boolean;
@@ -13,6 +22,7 @@ type Status = {
     gates: { enabled: boolean };
   };
   webSessionAvailable: boolean;
+  webCredentialSaved?: boolean;
   dav: { configured: boolean; version: number };
   services: Service[];
   pcsProgress?: Record<
@@ -25,6 +35,13 @@ export function mountAdmin(
   send: typeof fetch = fetch,
   confirmAction: (message: string) => boolean = (message) =>
     window.confirm(message),
+  copyText: (text: string) => Promise<void> = async (text) => {
+    const nav = doc.defaultView?.navigator as unknown as {
+      clipboard?: { writeText(text: string): Promise<void> };
+    };
+    if (!nav?.clipboard) throw new Error("clipboard-unavailable");
+    await nav.clipboard.writeText(text);
+  },
 ) {
   const el = <T extends HTMLElement>(id: string) => doc.getElementById(id) as T;
   const names: Record<string, string> = {
@@ -45,8 +62,7 @@ export function mountAdmin(
   const hints: Record<string, string> = {
     NOT_CONNECTED: "请先配置对应凭证。",
     REAUTH_REQUIRED: "Apple 拒绝了凭证，请重新登录或更换 App 专用密码。",
-    DEVICE_APPROVAL_PENDING:
-      "请点击“授权访问”，在 iPhone 或 iPad 上批准，再回来继续授权。",
+    DEVICE_APPROVAL_PENDING: "在 iPhone 或 iPad 上批准访问，再点击“继续验证”。",
     VERIFICATION_REQUIRED: "请重新登录并完成可信设备验证。",
     CONFLICT: "配置已变化，请刷新状态后再操作。",
     RATE_LIMITED: "请等待倒计时或稍后再试，勿连续点击。",
@@ -93,11 +109,39 @@ export function mountAdmin(
       "Worker 未绑定 D1。请检查名为 DB 的数据库绑定，再重新部署。",
   };
   let current: Status | null = null,
-    busy = false;
-  const checks = new Map<string, string>();
+    busy = false,
+    davEditing = false;
+  let workingService: string | null = null;
+  const copyIcon =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg>';
+  const errorText = (e: any) =>
+    (e.code ?? "REQUEST_FAILED") +
+    "：" +
+    (e.code === "CONFIGURATION_REQUIRED"
+      ? (configurationHints[e.message] ?? hints.CONFIGURATION_REQUIRED)
+      : (hints[e.code] ?? "操作未完成。")) +
+    (typeof e.message === "string" ? "\n详情：" + e.message : "") +
+    (typeof e.requestId === "string" ? "\n请求编号：" + e.requestId : "") +
+    (typeof e.retryAfterSeconds === "number"
+      ? `\n至少等待 ${Math.ceil(e.retryAfterSeconds)} 秒。`
+      : "");
+  async function copy(text: string, button: HTMLButtonElement) {
+    try {
+      await copyText(text);
+      button.title = "已复制";
+      el("copy-feedback").textContent = "已复制";
+    } catch {
+      button.title = "复制失败，请手动选择文字复制";
+      el("copy-feedback").textContent = "复制失败，请手动复制";
+    }
+  }
   function announce(text: string, error = false) {
     el("notice").textContent = text;
     el("notice").dataset.error = String(error);
+    el("copy-result").setAttribute(
+      "aria-label",
+      error ? "复制错误信息" : "复制操作结果",
+    );
   }
   async function api(path: string, value?: unknown) {
     let r: Response;
@@ -115,7 +159,7 @@ export function mountAdmin(
       });
     } catch {
       throw new Error(
-        "请求超时或网络中断。操作结果未确认，请刷新状态检查后再决定是否重试。",
+        "请求超时或网络中断。操作结果未确认，请刷新页面状态后重试。",
       );
     }
     if (
@@ -126,27 +170,10 @@ export function mountAdmin(
     const data: any = await r.json();
     if (!r.ok) {
       const e = data.error ?? {};
-      throw new Error(
-        (e.code ?? "REQUEST_FAILED") +
-          "：" +
-          (e.code === "CONFIGURATION_REQUIRED"
-            ? (configurationHints[e.message] ?? hints.CONFIGURATION_REQUIRED)
-            : e.code === "UPSTREAM_UNAVAILABLE" && path === "/api/admin/status"
-              ? "管理状态读取失败；此接口不请求 Apple，请记录请求编号并检查 Worker 数据库。"
-              : (hints[e.code] ?? e.message ?? "操作未完成。")) +
-          (typeof e.message === "string" &&
-          (["PROTOCOL_CHANGED", "DEVICE_APPROVAL_PENDING"].includes(e.code) ||
-            e.message.startsWith("DAV "))
-            ? "\n详情：" + e.message
-            : "") +
-          (typeof e.requestId === "string" &&
-          /^[a-f0-9-]{36}$/.test(e.requestId)
-            ? " 请求编号：" + e.requestId + "。"
-            : "") +
-          (typeof e.retryAfterSeconds === "number"
-            ? ` 至少等待 ${Math.ceil(e.retryAfterSeconds)} 秒。`
-            : ""),
-      );
+      if (e.code === "UPSTREAM_UNAVAILABLE" && path === "/api/admin/status")
+        e.message =
+          "管理状态读取失败；此接口不请求 Apple，请检查 Worker 数据库。";
+      throw new Error(errorText(e));
     }
     return data;
   }
@@ -154,10 +181,12 @@ export function mountAdmin(
     el<HTMLFieldSetElement>("dav-fields").disabled = busy || !current;
     el<HTMLButtonElement>("refresh").disabled = busy;
     el<HTMLButtonElement>("remove").disabled = busy || !current?.dav.configured;
+    el<HTMLButtonElement>("edit-dav").disabled = busy || !current;
     el<HTMLButtonElement>("disconnect").disabled =
-      busy || !current || current.web.state === "DISCONNECTED";
-    const connect = el<HTMLAnchorElement>("connect");
-    connect.setAttribute(
+      busy ||
+      !current ||
+      !(current.webCredentialSaved ?? current.webSessionAvailable);
+    el("connect").setAttribute(
       "aria-disabled",
       String(busy || !current || !current.web.gates.enabled),
     );
@@ -171,82 +200,62 @@ export function mountAdmin(
         busy || !s || (input.dataset.kind === "writable" && !s.enabled);
     }
     for (const button of doc.querySelectorAll<HTMLButtonElement>(
-      "#services button",
+      'button[data-kind="check"]',
     )) {
       const s = current?.services.find(
         (s) => s.service === button.dataset.service,
       );
       const p = current?.pcsProgress?.[pcs[button.dataset.service!]];
-      const until = p?.exhausted ? p.expiresAt : (p?.nextAttemptAt ?? 0);
+      const until =
+        s?.connection?.state === "pending"
+          ? (s.connection.nextAttemptAt ??
+            (p?.exhausted ? p.expiresAt : p?.nextAttemptAt) ??
+            0)
+          : 0;
       const seconds = Math.max(0, Math.ceil((until - Date.now()) / 1000));
       button.disabled =
-        busy ||
-        !s ||
-        (button.dataset.kind === "pcs"
-          ? !current?.webSessionAvailable || seconds > 0
-          : !s.enabled ||
-            !s.credentialAvailable ||
-            (!!pcs[s.service] && !s.pcsReady));
-      if (button.dataset.kind === "pcs")
-        button.textContent =
-          seconds > 0
-            ? `等待 ${seconds} 秒`
-            : s?.pcsReady
-              ? "更新授权"
-              : p
-                ? "继续授权"
-                : "授权访问";
+        busy || !s?.enabled || !s.credentialAvailable || seconds > 0;
+      button.textContent = seconds
+        ? `等待 ${seconds} 秒`
+        : s?.connection?.state === "pending"
+          ? "继续验证"
+          : "检查连接";
     }
   }
   function render() {
     if (!current) return;
-    el("web-state").textContent = current.webSessionAvailable
-      ? "已登录 Apple 账户"
-      : current.web.state === "DISCONNECTED"
-        ? "尚未登录"
-        : "网页会话尚不可用：" + current.web.state;
-    el("expiry").textContent = current.web.expiresAt
-      ? "本地会话最晚到期：" +
-        new Date(current.web.expiresAt).toLocaleString("zh-CN") +
-        "；Apple 可能提前要求验证。"
-      : current.webSessionAvailable
-        ? "本地会话永久保留；Apple 仍可能要求重新验证。"
+    const webSaved = current.webCredentialSaved ?? current.webSessionAvailable;
+    el("web-state").textContent = webSaved ? "已保存" : "未保存";
+    el("web-state").dataset.saved = String(webSaved);
+    el("dav-state").textContent = current.dav.configured ? "已保存" : "未保存";
+    el("dav-state").dataset.saved = String(current.dav.configured);
+    el("connect").textContent = webSaved ? "重新登录" : "登录 Apple";
+    el("disconnect").hidden = !webSaved;
+    el("expiry").textContent =
+      webSaved && !current.webSessionAvailable
+        ? "凭证已保留，连接需要重新验证"
         : "";
-    el("dav-state").textContent = current.dav.configured
-      ? "专用密码已保存"
-      : "尚未设置专用密码";
+    el("dav-saved-actions").hidden = !current.dav.configured;
+    el("dav-entry").hidden = current.dav.configured && !davEditing;
+    el("cancel-dav").hidden = !current.dav.configured;
     el("status").textContent = JSON.stringify(current, null, 2);
     el("services").replaceChildren();
     el("services").setAttribute("aria-busy", "false");
     for (const s of current.services) {
       const card = doc.createElement("article");
-      card.className = "card";
+      card.className = "card service-card";
       card.dataset.service = s.service;
+      card.dataset.enabled = String(s.enabled);
+      const header = doc.createElement("div");
+      header.className = "service-heading";
       const title = doc.createElement("h3");
       title.textContent = names[s.service];
-      card.appendChild(title);
-      const status = doc.createElement("p");
-      status.className = "service-state";
-      status.textContent =
-        (s.enabled ? "已启用" : "未启用") +
-        " · " +
-        (!s.credentialAvailable
-          ? "缺少可用凭证"
-          : pcs[s.service]
-            ? s.pcsReady
-              ? "已授权"
-              : "待授权：先点击“授权访问”"
-            : s.service === "findmy"
-              ? "共用 Apple 登录，无需单独授权"
-              : "专用密码已保存");
-      card.appendChild(status);
-      for (const key of (s.service === "findmy"
-        ? []
-        : ["enabled", "writable"]) as ("enabled" | "writable")[]) {
-        if (key === "writable" && pcs[s.service] && s.service !== "reminders")
-          continue;
+      header.appendChild(title);
+      card.appendChild(header);
+      const toggle = (key: "enabled" | "writable") => {
         const label = doc.createElement("label");
-        label.className = "toggle";
+        label.className =
+          key === "enabled" ? "switch toggle" : "toggle write-toggle";
         const input = doc.createElement("input");
         input.type = "checkbox";
         input.checked = s[key];
@@ -258,9 +267,9 @@ export function mountAdmin(
         );
         label.appendChild(input);
         label.appendChild(
-          doc.createTextNode(key === "enabled" ? "启用服务" : "允许新增与修改"),
+          doc.createTextNode(key === "enabled" ? "启用" : "允许新增与修改"),
         );
-        card.appendChild(label);
+        (key === "enabled" ? header : card).appendChild(label);
         input.addEventListener("change", () => {
           const checked = input.checked;
           if (busy) {
@@ -274,66 +283,112 @@ export function mountAdmin(
               writable:
                 key === "enabled" ? (checked ? s.writable : false) : checked,
             });
-            return names[s.service] + "权限已保存。";
+            return names[s.service] + "设置已保存。";
           });
         });
+      };
+      if (s.service !== "findmy") toggle("enabled");
+      const c = s.connection;
+      const state = doc.createElement("p");
+      state.className = "connection-state";
+      const kind =
+        workingService === s.service
+          ? "checking"
+          : !s.credentialAvailable
+            ? "missing"
+            : s.requiresVerification
+              ? "verification"
+              : (c?.state ?? "unchecked");
+      state.dataset.state = kind;
+      state.textContent = {
+        checking: "正在检查…",
+        missing: "请先配置凭证",
+        unchecked: "尚未检查",
+        stale: "待重新检查",
+        verification: "需要重新验证",
+        ok: "连接正常",
+        error: "连接失败",
+        pending:
+          c?.action === "wait-for-reminders-keys"
+            ? "正在准备数据访问"
+            : c?.error?.code === "RATE_LIMITED"
+              ? "请稍后继续"
+              : "需要设备批准",
+      }[kind]!;
+      card.appendChild(state);
+      if (c?.checkedAt) {
+        const time = doc.createElement("p");
+        time.className = "check-time";
+        time.textContent =
+          "上次检查：" + new Date(c.checkedAt).toLocaleString("zh-CN");
+        card.appendChild(time);
       }
-      if (["notes", "photos", "drive", "findmy"].includes(s.service)) {
-        const badge = doc.createElement("span");
-        badge.className = "badge";
-        badge.textContent =
-          s.service === "findmy" ? "本人及家庭设备 · 播放声音需确认" : "只读";
-        card.appendChild(badge);
+      if (s.requiresVerification) {
+        const p = doc.createElement("p");
+        p.textContent = "请在凭证管理中重新登录 Apple。已保存的凭证会保留。";
+        card.appendChild(p);
+      }
+      if (c?.state === "pending") {
+        const p = doc.createElement("p");
+        p.textContent =
+          c.action === "wait-for-reminders-keys"
+            ? "准备完成后点击“继续验证”。"
+            : "在 iPhone 或 iPad 上批准访问，然后点击“继续验证”。";
+        card.appendChild(p);
+      }
+      if (c?.error) {
+        const help = doc.createElement("p");
+        help.textContent = hints[c.error.code] ?? "请查看错误详情。";
+        card.appendChild(help);
+        const details = doc.createElement("details");
+        const summary = doc.createElement("summary");
+        summary.textContent = "错误详情";
+        details.appendChild(summary);
+        const pre = doc.createElement("pre");
+        pre.textContent = errorText(c.error);
+        details.appendChild(pre);
+        const button = doc.createElement("button");
+        button.className = "icon-button";
+        button.innerHTML = copyIcon;
+        button.type = "button";
+        button.setAttribute(
+          "aria-label",
+          "复制" + names[s.service] + "错误信息",
+        );
+        button.title = "复制错误信息";
+        button.onclick = () => void copy(pre.textContent ?? "", button);
+        details.appendChild(button);
+        card.appendChild(details);
+      }
+      if (["calendar", "contacts", "reminders"].includes(s.service))
+        toggle("writable");
+      if (s.service === "findmy") {
+        const p = doc.createElement("small");
+        p.textContent = "本人及家庭设备；播放声音需确认";
+        card.appendChild(p);
       }
       const actions = doc.createElement("div");
       actions.className = "actions";
-      if (pcs[s.service]) {
-        const b = doc.createElement("button");
-        b.className = "secondary";
-        b.dataset.service = s.service;
-        b.dataset.kind = "pcs";
-        b.textContent = "授权访问";
-        b.onclick = () =>
-          void action(async () => {
-            const r = await api(
-              s.service === "reminders" ? "/api/auth/resume" : "/api/admin/pcs",
-              s.service === "reminders"
-                ? {
-                    expectedGeneration: current!.web.generation,
-                    restartApproval: true,
-                  }
-                : { service: pcs[s.service] },
-            );
-            return r.state === "READY"
-              ? names[s.service] + "已授权，可以检查连接。"
-              : names[s.service] +
-                  (r.action === "wait-for-reminders-keys"
-                    ? "正在准备数据访问，倒计时结束后点击“继续授权”。"
-                    : "请在 iPhone 或 iPad 上批准访问，倒计时结束后点击“继续授权”。");
-          });
-        actions.appendChild(b);
-      }
       const check = doc.createElement("button");
-      check.textContent = "检查连接";
-      check.dataset.service = s.service;
       check.dataset.kind = "check";
-      check.onclick = () =>
+      check.dataset.service = s.service;
+      check.textContent = "检查连接";
+      check.onclick = () => {
+        if (busy) return;
+        workingService = s.service;
+        render();
         void action(async () => {
           const r = await api("/api/admin/check", { service: s.service });
-          checks.set(
-            s.service,
-            "连接正常 · " + new Date(r.checkedAt).toLocaleTimeString("zh-CN"),
-          );
-          return names[s.service] + "连接正常。";
+          return r.liveReadPassed
+            ? names[s.service] + "连接正常。"
+            : names[s.service] +
+                (r.action === "wait-for-reminders-keys"
+                  ? "正在准备数据访问，请稍后继续验证。"
+                  : "需要在 iPhone 或 iPad 上批准访问，然后继续验证。");
         });
+      };
       actions.appendChild(check);
       card.appendChild(actions);
-      if (checks.has(s.service)) {
-        const p = doc.createElement("p");
-        p.className = "service-state";
-        p.textContent = checks.get(s.service)!;
-        card.appendChild(p);
-      }
       el("services").appendChild(card);
     }
     controls();
@@ -350,108 +405,129 @@ export function mountAdmin(
     try {
       const message = await run();
       try {
+        workingService = null;
         await refresh();
         announce(message);
       } catch (error) {
         current = null;
         announce(
           message +
-            " 但状态刷新失败：" +
-            (error instanceof Error ? error.message : "请刷新页面确认。"),
+            "\n状态刷新失败：" +
+            (error instanceof Error ? error.message : "请重试。"),
           true,
         );
       }
-    } catch (e) {
+    } catch (error) {
+      workingService = null;
       try {
         await refresh();
       } catch {
         current = null;
       }
-      announce(e instanceof Error ? e.message : "操作失败，请刷新状态。", true);
+      announce(
+        error instanceof Error ? error.message : "操作失败，请重试。",
+        true,
+      );
     } finally {
       busy = false;
       if (!current) {
-        el("web-state").textContent =
-          "状态读取失败，登录暂不可用。修复上方配置错误后点击“刷新状态”。";
-        el("dav-state").textContent = "状态读取失败，暂不能保存凭证。";
-        el("expiry").textContent = "";
+        el("web-state").textContent = "读取失败";
+        el("dav-state").textContent = "读取失败";
         el("services").replaceChildren();
-        el("status").textContent = "状态不可用，请查看上方错误。";
+        el("status").textContent = "状态不可用";
+        el("dav-entry").hidden = true;
       }
       controls();
     }
   }
-  el("connect").addEventListener("click", (e) => {
-    if (busy || !current?.web.gates.enabled) e.preventDefault();
+  el("connect").addEventListener("click", (event) => {
+    if (busy || !current?.web.gates.enabled) event.preventDefault();
     else if (
-      current.webSessionAvailable &&
-      !confirmAction("重新登录会替换已有网页会话和各服务授权。确定继续？")
+      (current.webCredentialSaved ?? current.webSessionAvailable) &&
+      !confirmAction("重新登录会替换已保存的网页凭证，是否继续？")
     )
-      e.preventDefault();
+      event.preventDefault();
   });
-  el<HTMLFormElement>("dav").onsubmit = (e) => {
-    e.preventDefault();
+  el("edit-dav").onclick = () => {
+    if (busy) return;
+    davEditing = true;
+    render();
+    el<HTMLInputElement>("account").focus();
+  };
+  el("cancel-dav").onclick = () => {
+    if (busy) return;
+    davEditing = false;
+    el<HTMLInputElement>("password").value = "";
+    render();
+  };
+  el<HTMLFormElement>("dav").onsubmit = (event) => {
+    event.preventDefault();
     if (busy || !current) return;
     const account = el<HTMLInputElement>("account").value.trim();
-    const raw = el<HTMLInputElement>("password").value;
-    const compact = raw.replace(/[\s-]/g, "");
+    const compact = el<HTMLInputElement>("password").value.replace(
+      /[\s-]/g,
+      "",
+    );
     if (!/^[a-z]{16}$/.test(compact)) {
-      announce(
-        "App 专用密码应为 Apple 生成的 16 位小写字母；请勿输入账户主密码。",
-        true,
-      );
+      announce("App 专用密码应为 Apple 生成的 16 位小写字母。", true);
       return;
     }
-    const version = current.dav.version;
+    const expectedVersion = current.dav.version;
     el<HTMLInputElement>("password").value = "";
     void action(async () => {
       await api("/api/admin/credentials", {
         account,
         password: compact,
-        expectedVersion: version,
+        expectedVersion,
       });
-      checks.delete("calendar");
-      checks.delete("contacts");
-      return "专用密码已加密保存，请分别检查日历与通讯录。";
+      davEditing = false;
+      return "专用密码已保存。请检查相关服务连接。";
     });
   };
   el("remove").onclick = () => {
     if (
       busy ||
       !current?.dav.configured ||
-      !confirmAction(
-        "移除 Worker 中的日历和通讯录凭证？不会删除 Apple 数据，也不会撤销 Apple 网站上的密码。",
-      )
+      !confirmAction("移除已保存的 App 专用密码？")
     )
       return;
-    const version = current.dav.version;
+    const expectedVersion = current.dav.version;
     void action(async () => {
-      await api("/api/admin/remove-credentials", { expectedVersion: version });
-      checks.delete("calendar");
-      checks.delete("contacts");
-      return "本地专用密码已移除。";
+      await api("/api/admin/remove-credentials", { expectedVersion });
+      davEditing = false;
+      return "专用密码已移除。";
     });
   };
   el("disconnect").onclick = () => {
     if (
       busy ||
       !current ||
-      !confirmAction(
-        "断开四项网页服务并撤销下载引用？日历和通讯录的专用密码将保留。",
-      )
+      !confirmAction("移除网页凭证并断开相关服务？App 专用密码会保留。")
     )
       return;
     void action(async () => {
       await api("/api/auth/disconnect", {});
-      for (const s of Object.keys(pcs)) checks.delete(s);
-      return "网页会话已断开；Apple 数据未删除。";
+      return "网页凭证已移除。";
     });
   };
   el("refresh").onclick = () =>
-    void action(async () => "配置状态已刷新；未请求 Apple 服务。");
-  el<HTMLInputElement>("mcp-url").value = doc.location?.origin + "/mcp";
+    void action(async () => "页面状态已刷新，未请求 Apple 服务。");
+  el<HTMLInputElement>("mcp-url").value = new URL(
+    "/mcp",
+    doc.location.origin,
+  ).href;
+  el("copy-mcp").onclick = () =>
+    void copy(
+      el<HTMLInputElement>("mcp-url").value,
+      el<HTMLButtonElement>("copy-mcp"),
+    );
+  el("copy-result").onclick = () =>
+    void copy(
+      el("notice").textContent ?? "",
+      el<HTMLButtonElement>("copy-result"),
+    );
   controls();
-  void action(async () => "先配置两类凭证，再逐项启用并检查。");
+  void action(async () => "页面状态已更新。");
   const timer = setInterval(controls, 1000);
   return {
     destroy() {

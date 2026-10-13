@@ -202,7 +202,13 @@ export class WebClient {
     if (!value)
       throw new AppError(
         "UNSUPPORTED_FEATURE",
-        `Apple did not provide a supported ${service} address. Reconnect or check protocol updates; this account may not support the service.`,
+        `Apple service discovery (${this.auth.region}): no supported ${service} endpoint in the saved account map; available services=${
+          Object.keys(this.session.connection.services ?? {})
+            .filter((key) =>
+              ["ckdatabasews", "drivews", "docws", "fmip"].includes(key),
+            )
+            .join(",") || "none"
+        }. No service request was sent.`,
         409,
       );
     return value;

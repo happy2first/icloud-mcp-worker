@@ -122,7 +122,10 @@ export function requireCurrentLogin(login: LoginAssurance, now = Date.now()) {
 // Apple has endpoint-specific success conventions. In particular, a bridge
 // validation 409 is accepted by the pinned protocol. Explicit rejection is
 // never overridden by an otherwise supported HTTP status.
-export function requireNoAppleRejection(body: Record<string, unknown> | null) {
+export function requireNoAppleRejection(
+  body: Record<string, unknown> | null,
+  stage = "authentication",
+) {
   if (!body) return;
   const securityCode = body.securityCode;
   const rejected =
@@ -142,7 +145,17 @@ export function requireNoAppleRejection(body: Record<string, unknown> | null) {
   if (rejected)
     throw new AppError(
       "VERIFICATION_REQUIRED",
-      "Apple rejected this authentication step. Restart sign-in; no session was saved.",
+      `Apple ${stage}: authentication result rejected (success=${flag(body.success)}; valid=${flag(body.valid)}; verified=${flag(body.verified)}; authenticated=${flag(body.authenticated)}; error=${body.error == null ? "absent" : "present"}; errorCode=${typeof body.errorCode === "number" && Number.isFinite(body.errorCode) ? body.errorCode : "unspecified"}; serviceErrors=${Array.isArray(body.serviceErrors) ? body.serviceErrors.length : 0}).`,
       409,
     );
+}
+
+function flag(value: unknown) {
+  return value === true
+    ? "true"
+    : value === false
+      ? "false"
+      : value === undefined
+        ? "missing"
+        : "invalid";
 }

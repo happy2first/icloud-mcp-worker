@@ -268,3 +268,22 @@ test("restored mainland sessions validate and request PCS using their saved regi
     AppleAuthHTTP.restore({ ...saved, region: "hostile.invalid" }),
   );
 });
+
+test("Find My uses Apple's findme discovery key and still rejects unrelated destinations", async () => {
+  for (const root of [
+    "https://p123-fmipweb.icloud.com.cn",
+    "https://evil.invalid",
+  ]) {
+    const http = AppleAuthHTTP.restore(snapshot(), async () =>
+      Response.json({
+        ...accepted(),
+        webservices: { ...accepted().webservices, findme: { url: root } },
+      }),
+    );
+    const result = await http.validateSession("123456789");
+    assert.equal(
+      result.services?.fmip,
+      root.includes("evil") ? undefined : root,
+    );
+  }
+});

@@ -54,10 +54,10 @@ export async function advancePcs(
       409,
     );
   const consent = await http.setup("/requestWebAccessState", undefined, dsid);
-  http.expect(consent, [200]);
+  http.expect(consent, [200], "requestWebAccessState");
   checkpoint.consentChecks++;
   const state = consent.body;
-  requireNoAppleRejection(state);
+  requireNoAppleRejection(state, "requestWebAccessState");
   if (
     !state ||
     (state.isICDRSDisabled !== undefined &&
@@ -79,7 +79,7 @@ export async function advancePcs(
         undefined,
         dsid,
       );
-      http.expect(request, [200]);
+      http.expect(request, [200], "enableDeviceConsentForPCS");
       if (request.body?.isDeviceConsentNotificationSent !== true)
         throw new AppError(
           "DEVICE_APPROVAL_PENDING",
@@ -100,7 +100,7 @@ export async function advancePcs(
     { appName, derivedFromUserAction: checkpoint.pcsAttempts === 0 },
     dsid,
   );
-  http.expect(pcs, [200]);
+  http.expect(pcs, [200], `requestPCS (${appName})`);
   checkpoint.pcsAttempts++;
   if (pcs.body?.status === "success") {
     checkpoint.nextAttemptAt = 0;

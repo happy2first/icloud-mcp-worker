@@ -17,6 +17,8 @@ import {
   rateLimit,
   ServiceName,
 } from "./services/config.ts";
+import { checkScopes, saveCheck } from "./services/checks.ts";
+import { AppleSessionRepository } from "./persistence/apple-sessions.ts";
 import { serviceStatus } from "./services/status.ts";
 import { webOperation } from "./services/web.ts";
 import { DavClient } from "./services/dav.ts";
@@ -136,33 +138,111 @@ const worker = {
               .object({ service: z.enum([...ServiceName.options, "findmy"]) })
               .strict()
               .parse(value);
-            if (c.service !== "findmy")
-              await requireService(env, owner, c.service);
-            if (c.service === "findmy") {
-              await findMyOperation(env, owner, (client) => client.list());
-            } else if (c.service === "calendar" || c.service === "contacts") {
-              await (await DavClient.for(env, owner, c.service)).discover();
-            } else if (c.service === "reminders") {
-              const apple = new AppleConnectionService(env, owner);
-              await apple.getCurrentLists((await apple.status()).generation);
-            } else if (c.service === "notes") {
-              await webOperation(env, owner, "notes3", (w) =>
-                new NotesClient(w).list(1),
-              );
-            } else if (c.service === "photos") {
-              await webOperation(env, owner, "photos", (w) =>
-                new PhotosClient(w).albums(1),
-              );
-            } else {
-              await webOperation(env, owner, "iclouddrive", (w) =>
-                new DriveClient(w).browse(undefined, 0, 1),
+            const scope = (await checkScopes(env, owner))[c.service];
+            try {
+              if (c.service !== "findmy")
+                await requireService(env, owner, c.service);
+              const map = {
+                notes: "notes3",
+                photos: "photos",
+                drive: "iclouddrive",
+              } as const;
+              let approval: {
+                state: string;
+                action?: string;
+                nextAttemptAt?: number;
+              } | null = null;
+              if (c.service === "reminders") {
+                const apple = new AppleConnectionService(env, owner);
+                const status = await apple.status();
+                if (status.state !== "READY") {
+                  const r = await apple.resume(status.generation, true);
+                  approval = {
+                    state: r.state,
+                    action: r.action ?? undefined,
+                    nextAttemptAt: r.nextAttemptAt,
+                  };
+                }
+              } else if (c.service in map) {
+                const app = map[c.service as keyof typeof map];
+                const saved = await new AppleSessionRepository(
+                  env,
+                  owner,
+                ).load();
+                if (!saved.session.servicePcs?.[app]?.ready)
+                  approval = await webOperation<{
+                    state: string;
+                    action?: string;
+                    nextAttemptAt?: number;
+                  }>(env, owner, app, async () => ({ state: "READY" }), true);
+              }
+              if (approval && approval.state !== "READY") {
+                const checkedAt = Date.now();
+                await saveCheck(env, owner, c.service, scope, {
+                  state: "pending",
+                  checkedAt,
+                  action: approval.action,
+                  nextAttemptAt: approval.nextAttemptAt,
+                });
+                result = {
+                  service: c.service,
+                  liveReadPassed: false,
+                  ...approval,
+                  checkedAt,
+                };
+              } else {
+                if (c.service === "findmy") {
+                  await findMyOperation(env, owner, (client) => client.list());
+                } else if (
+                  c.service === "calendar" ||
+                  c.service === "contacts"
+                ) {
+                  await (await DavClient.for(env, owner, c.service)).discover();
+                } else if (c.service === "reminders") {
+                  const apple = new AppleConnectionService(env, owner);
+                  await apple.getCurrentLists(
+                    (await apple.status()).generation,
+                  );
+                } else if (c.service === "notes") {
+                  await webOperation(env, owner, "notes3", (w) =>
+                    new NotesClient(w).list(1),
+                  );
+                } else if (c.service === "photos") {
+                  await webOperation(env, owner, "photos", (w) =>
+                    new PhotosClient(w).albums(1),
+                  );
+                } else {
+                  await webOperation(env, owner, "iclouddrive", (w) =>
+                    new DriveClient(w).browse(undefined, 0, 1),
+                  );
+                }
+                const checkedAt = Date.now();
+                await saveCheck(env, owner, c.service, scope, {
+                  state: "ok",
+                  checkedAt,
+                });
+                result = {
+                  service: c.service,
+                  liveReadPassed: true,
+                  checkedAt,
+                };
+              }
+            } catch (error) {
+              const safe = publicError(error, crypto.randomUUID());
+              await saveCheck(env, owner, c.service, scope, {
+                state:
+                  safe.code === "DEVICE_APPROVAL_PENDING" ? "pending" : "error",
+                checkedAt: Date.now(),
+                error: safe,
+              });
+              return Response.json(
+                { error: safe },
+                {
+                  status: error instanceof AppError ? error.status : 503,
+                  headers: { "cache-control": "private, no-store" },
+                },
               );
             }
-            result = {
-              service: c.service,
-              liveReadPassed: true,
-              checkedAt: Date.now(),
-            };
           } else
             throw new AppError(
               "VALIDATION_ERROR",
