@@ -60,6 +60,8 @@ async function setup(send: typeof fetch, begin: any = () => ({ cancel() {} })) {
   };
   for (const id of ["credentials", "verification"])
     (document.getElementById(id) as any).reportValidity = () => true;
+  for (const input of document.querySelectorAll("[data-code-digit]"))
+    (input as any).select = () => {};
   runInNewContext(script.outputFiles[0].text, context);
   const settle = async () => {
     for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 1));
@@ -145,6 +147,7 @@ test("login clears secrets, exposes code only at the actual challenge and return
     assert.equal(h.el("verification-panel").hidden, false);
     assert.equal(h.el("verification-fields").disabled, false);
     h.el("code").value = "123456";
+    h.el("code").dispatchEvent(new h.window.Event("input"));
     h.el("verification").dispatchEvent(
       new h.window.Event("submit", { cancelable: true }),
     );

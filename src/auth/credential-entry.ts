@@ -3,6 +3,7 @@ import {
   type BrowserSignInUpdate,
 } from "../app/apple-auth-client.ts";
 import { APPLE_LOGIN_POLICY } from "./apple/policy.ts";
+import { mountCodeInputs } from "./code-inputs.ts";
 
 type Status = {
   generation: number;
@@ -15,9 +16,9 @@ const form = element<HTMLFormElement>("credentials"),
   fields = element<HTMLFieldSetElement>("fields"),
   verification = element<HTMLFormElement>("verification");
 const account = element<HTMLInputElement>("account"),
-  password = element<HTMLInputElement>("password"),
-  code = element<HTMLInputElement>("code");
+  password = element<HTMLInputElement>("password");
 const verificationFields = element<HTMLFieldSetElement>("verification-fields");
+const code = mountCodeInputs(document, () => verificationFields.disabled);
 const panel = element<HTMLElement>("verification-panel"),
   retry = element<HTMLButtonElement>("retry-status");
 const region = element<HTMLElement & { value: string }>("region");
@@ -36,7 +37,7 @@ function announce(text: string, error = false) {
 }
 function clear() {
   password.value = "";
-  code.value = "";
+  code.clear();
 }
 function stop() {
   revision++;
@@ -191,8 +192,12 @@ form.addEventListener("submit", (event) => {
 verification.addEventListener("submit", (event) => {
   event.preventDefault();
   if (verificationFields.disabled || !verification.reportValidity()) return;
-  let value = code.value;
-  code.value = "";
+  let value = code.read();
+  if (!/^\d{6}$/.test(value)) {
+    announce("请输入完整的六位数字验证码。", true);
+    return;
+  }
+  code.clear();
   void attempt
     ?.submitCode(value)
     .catch((error) =>
