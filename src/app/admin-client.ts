@@ -53,13 +53,32 @@ export function mountAdmin(
     UNSUPPORTED_FEATURE: "当前协议不支持此服务或资源，请查看项目支持范围。",
     PROTOCOL_CHANGED:
       "Apple 接口返回未支持的协议，请记录错误代码并检查项目更新。",
-    CONFIGURATION_REQUIRED: "请先完成 D1、域名与 Workers Secrets 配置。",
+    CONFIGURATION_REQUIRED:
+      "Worker 配置尚未就绪，请检查 D1 绑定与加密 Secret，并部署最新代码。",
     OWNER_NOT_CONFIGURED: "管理员尚未配置 Access 身份与应用域名。",
     UNSUPPORTED_AUTH:
       "Apple 登录未启用或返回了未支持的验证方式，请检查配置与官方账户状态。",
     UPSTREAM_UNAVAILABLE: "无法连接 Apple 服务或请求超时，请稍后再试。",
     AUTH_EXPIRED: "会话已过期，请重新登录。",
     RESTART_REQUIRED: "本次授权需重试，请刷新状态后操作。",
+  };
+  const configurationHints: Record<string, string> = {
+    "ENCRYPTION_KEYS_JSON must contain a 32-byte key encoded as Base64, without JSON or quotes.":
+      "加密 Secret ENCRYPTION_KEYS_JSON 未配置或格式错误。请在 Worker 的运行时 Secret 中填写 32 字节密钥的标准 Base64 字符串（44 个字符、末尾为 =），不要填写 32 个普通字符或引号；已有凭证时不要更换密钥。",
+    "Each encryption key must contain exactly 32 bytes.":
+      "ENCRYPTION_KEYS_JSON 中的密钥解码后不是 32 字节，请核对同一密钥的完整 Base64 值。",
+    "ENCRYPTION_KEYS_JSON must be valid JSON.":
+      "加密 Secret 格式不正确。最新代码支持直接填写 Base64；若尚未部署最新提交，请先更新代码。",
+    "ENCRYPTION_KEYS_JSON must contain exactly one 32-byte encryption key.":
+      "加密 Secret 无效。请直接填写 32 字节密钥的 Base64 字符串；旧 JSON 配置只能包含一把密钥。",
+    "Configure encryption Secrets.":
+      "加密 Secret ENCRYPTION_KEYS_JSON 未正确配置，请检查运行时 Secret 的名称和 Base64 值。",
+    "The server-only encryption secret must be configured before Apple sessions can be stored.":
+      "加密 Secret 尚未就绪，或当前仍是旧版代码。请部署最新提交，并检查运行时 ENCRYPTION_KEYS_JSON。",
+    "Persistent storage has not been provisioned.":
+      "Worker 未绑定 D1。请检查名为 DB 的数据库绑定，再重新部署。",
+    "Bind the D1 database.":
+      "Worker 未绑定 D1。请检查名为 DB 的数据库绑定，再重新部署。",
   };
   let current: Status | null = null,
     busy = false;
@@ -98,7 +117,13 @@ export function mountAdmin(
       throw new Error(
         (e.code ?? "REQUEST_FAILED") +
           "：" +
-          (hints[e.code] ?? e.message ?? "操作未完成。") +
+          (e.code === "CONFIGURATION_REQUIRED"
+            ? (configurationHints[e.message] ?? hints.CONFIGURATION_REQUIRED)
+            : (hints[e.code] ?? e.message ?? "操作未完成。")) +
+          (typeof e.requestId === "string" &&
+          /^[a-f0-9-]{36}$/.test(e.requestId)
+            ? " 请求编号：" + e.requestId + "。"
+            : "") +
           (typeof e.retryAfterSeconds === "number"
             ? ` 至少等待 ${Math.ceil(e.retryAfterSeconds)} 秒。`
             : ""),
@@ -312,6 +337,14 @@ export function mountAdmin(
       announce(e instanceof Error ? e.message : "操作失败，请刷新状态。", true);
     } finally {
       busy = false;
+      if (!current) {
+        el("web-state").textContent =
+          "状态读取失败，登录暂不可用。修复上方配置错误后点击“刷新状态”。";
+        el("dav-state").textContent = "状态读取失败，暂不能保存凭证。";
+        el("expiry").textContent = "";
+        el("services").replaceChildren();
+        el("status").textContent = "状态不可用，请查看上方错误。";
+      }
       controls();
     }
   }

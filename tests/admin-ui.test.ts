@@ -86,6 +86,45 @@ test("management locks actions until status is loaded and uses six accessible se
     h.ui.destroy();
   }
 });
+test("configuration failure identifies the Secret, clears loading text and recovers without an Apple request", async () => {
+  let broken = true;
+  const paths: string[] = [];
+  const h = await setup((async (path) => {
+    paths.push(String(path));
+    return broken
+      ? Response.json(
+          {
+            error: {
+              code: "CONFIGURATION_REQUIRED",
+              message:
+                "ENCRYPTION_KEYS_JSON must contain a 32-byte key encoded as Base64, without JSON or quotes.",
+              requestId: "edcaa17a-5ee4-4c7e-8436-cabceaf16a79",
+            },
+          },
+          { status: 503 },
+        )
+      : Response.json(base());
+  }) as typeof fetch);
+  try {
+    await h.settle();
+    assert.match(h.el("notice").textContent, /ENCRYPTION_KEYS_JSON.*44/);
+    assert.match(h.el("notice").textContent, /edcaa17a/);
+    assert.match(h.el("web-state").textContent, /状态读取失败/);
+    assert.ok(!h.el("web-state").textContent.includes("正在读取"));
+    assert.equal(h.el("connect").getAttribute("aria-disabled"), "true");
+    assert.equal(h.el("refresh").disabled, false);
+    assert.equal(h.el("dav-fields").disabled, true);
+    broken = false;
+    h.el("refresh").click();
+    await h.settle();
+    assert.equal(h.el("connect").getAttribute("aria-disabled"), "false");
+    assert.equal(h.el("dav-fields").disabled, false);
+    assert.ok(paths.every((path) => path === "/api/admin/status"));
+  } finally {
+    h.ui.destroy();
+  }
+});
+
 test("disabling a service clears write permission and serializes repeated changes", async () => {
   const h = await setup();
   try {
