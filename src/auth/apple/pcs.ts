@@ -1,5 +1,6 @@
 import { AppError } from "../../errors.ts";
 import { AppleAuthHTTP } from "./http.ts";
+import { requireNoAppleRejection } from "./policy.ts";
 
 export interface PcsCheckpoint {
   consentRequested: boolean;
@@ -56,13 +57,22 @@ export async function advancePcs(
   http.expect(consent, [200]);
   checkpoint.consentChecks++;
   const state = consent.body;
-  if (typeof state?.isICDRSDisabled !== "boolean")
+  requireNoAppleRejection(state);
+  if (
+    !state ||
+    (state.isICDRSDisabled !== undefined &&
+      typeof state.isICDRSDisabled !== "boolean") ||
+    (state.isDeviceConsentedForPCS !== undefined &&
+      typeof state.isDeviceConsentedForPCS !== "boolean")
+  )
     throw new AppError(
       "PROTOCOL_CHANGED",
-      "Apple returned an unknown web-access consent state.",
+      "Apple requestWebAccessState returned invalid authorization flags.",
     );
   if (state.isICDRSDisabled === false) return { state: "READY", checkpoint };
-  if (state.isDeviceConsentedForPCS !== true) {
+  // pyicloud defaults the optional consent flag to true. If either field is
+  // absent, verify through requestPCS rather than declaring access ready.
+  if (state.isDeviceConsentedForPCS === false) {
     if (!checkpoint.consentRequested) {
       const request = await http.setup(
         "/enableDeviceConsentForPCS",
@@ -104,7 +114,7 @@ export async function advancePcs(
   )
     throw new AppError(
       "PROTOCOL_CHANGED",
-      "Apple returned an unsupported Reminders key-consent response.",
+      `Apple requestPCS (${appName}) returned an unsupported authorization result (status=${pcs.body?.status === "error" ? "error" : pcs.body?.status === undefined ? "missing" : "other"}; message=${typeof pcs.body?.message === "string" ? "present" : "missing"}).`,
     );
   checkpoint.nextAttemptAt = now + 5000;
   return {

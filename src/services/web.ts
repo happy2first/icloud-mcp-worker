@@ -85,6 +85,9 @@ export async function webOperation<T>(
         );
         return {
           state: result.state,
+          ...(result.state === "DEVICE_APPROVAL_PENDING"
+            ? { action: result.action }
+            : {}),
           nextAttemptAt: result.checkpoint.nextAttemptAt,
         } as T;
       }
@@ -113,7 +116,7 @@ export async function webOperation<T>(
         !budget.recoveryUsed &&
         (service === "fmip"
           ? env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
-          : env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1")
+          : env.APPLE_SESSION_RENEWAL_ENABLED !== "false")
       ) {
         await repo.releaseResume(fence);
         await renewal.ensure(initial.fence.generation, budget, true);
@@ -130,7 +133,7 @@ export async function webOperation<T>(
         e.code === "REAUTH_REQUIRED" &&
         (service === "fmip"
           ? env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
-          : env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1")
+          : env.APPLE_SESSION_RENEWAL_ENABLED !== "false")
       ) {
         const metadata = session.renewal ?? renewalCheckpoint();
         const failures = Math.min(8, metadata.failures + 1);

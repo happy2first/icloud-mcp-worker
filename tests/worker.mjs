@@ -136,7 +136,7 @@ try {
   assert.equal(status.status, 200);
   const s = await status.json();
   assert.equal(s.web.state, "DISCONNECTED");
-  assert.equal(s.services.length, 6);
+  assert.equal(s.services.length, 7);
   assert.ok(s.services.every((x) => !x.enabled));
   const rejected = await request(
     "/api/admin/credentials",
@@ -402,6 +402,9 @@ try {
   });
   assert.equal(fmipLocation.result.structuredContent.location.isOld, true);
   assert.equal(fmipLocation.result.structuredContent.refreshAccepted, false);
+  const findmyCheck = await request("/api/admin/check", { service: "findmy" });
+  assert.equal(findmyCheck.status, 200, await findmyCheck.clone().text());
+  assert.equal((await findmyCheck.json()).liveReadPassed, true);
   // Never send a synthetic or real sound during integration verification.
   assert.ok(!calls.some((c) => c.url.endsWith("playSound")));
   const independentStatus = await (await request("/api/admin/status")).json();

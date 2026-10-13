@@ -11,6 +11,7 @@ const services = [
   "notes",
   "photos",
   "drive",
+  "findmy",
 ];
 const base = () => ({
   web: {
@@ -60,7 +61,7 @@ async function setup(send?: typeof fetch, confirm = () => true) {
   const el = (id: string) => document.getElementById(id)! as any;
   return { document, window, ui, state, requests, el, settle };
 }
-test("management locks actions until status is loaded and uses six accessible service cards", async () => {
+test("management locks actions until status is loaded and uses seven accessible service cards", async () => {
   let resolve!: (r: Response) => void;
   const h = await setup(
     (async () => new Promise((r) => (resolve = r))) as typeof fetch,
@@ -70,7 +71,7 @@ test("management locks actions until status is loaded and uses six accessible se
     assert.equal(h.el("connect").getAttribute("aria-disabled"), "true");
     resolve(Response.json(h.state));
     await h.settle();
-    assert.equal(h.document.querySelectorAll("article.card").length, 6);
+    assert.equal(h.document.querySelectorAll("article.card").length, 7);
     assert.equal(
       h.document.querySelectorAll('[data-kind="writable"]').length,
       3,
@@ -214,7 +215,7 @@ test("PCS waiting buttons reflect persisted per-service delay without polling Ap
       h.requests.filter((r) => r.path === "/api/admin/pcs").length,
       1,
     );
-    assert.match(h.el("notice").textContent, /可信设备/);
+    assert.match(h.el("notice").textContent, /iPhone/);
   } finally {
     h.ui.destroy();
   }
@@ -277,6 +278,50 @@ test("expired Access HTML disables credential submission and permits status retr
     h.el("refresh").click();
     await h.settle();
     assert.equal(h.el("dav-fields").disabled, false);
+  } finally {
+    h.ui.destroy();
+  }
+});
+
+test("homepage explains authorization plainly, includes Find My and keeps unapproved checks disabled", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    const page = h.document.body.textContent;
+    assert.ok(page.includes("查找"));
+    assert.ok(!page.includes("PCS"));
+    assert.ok(!page.includes("请勿在聊天中提供"));
+    const check = h.document.querySelector(
+      'button[data-service="notes"][data-kind="check"]',
+    ) as any;
+    assert.equal(check.disabled, true);
+    assert.equal(
+      h.document.querySelectorAll('input[data-service="findmy"]').length,
+      0,
+    );
+    h.state.services.find((s) => s.service === "notes")!.pcsReady = true;
+    h.el("refresh").click();
+    await h.settle();
+    // Enabling remains a separate explicit user choice.
+    assert.equal(
+      (
+        h.document.querySelector(
+          'button[data-service="notes"][data-kind="check"]',
+        ) as any
+      ).disabled,
+      true,
+    );
+    h.state.services.find((s) => s.service === "notes")!.enabled = true;
+    h.el("refresh").click();
+    await h.settle();
+    assert.equal(
+      (
+        h.document.querySelector(
+          'button[data-service="notes"][data-kind="check"]',
+        ) as any
+      ).disabled,
+      false,
+    );
   } finally {
     h.ui.destroy();
   }

@@ -23,6 +23,7 @@ import { DavClient } from "./services/dav.ts";
 import { NotesClient } from "./services/notes.ts";
 import { PhotosClient } from "./services/photos.ts";
 import { DriveClient } from "./services/drive.ts";
+import { findMyOperation } from "./services/findmy.ts";
 import { AppleConnectionService } from "./auth/service.ts";
 import { download } from "./services/downloads.ts";
 import client from "./client.generated.ts";
@@ -131,9 +132,15 @@ const worker = {
               true,
             );
           } else if (path === "/api/admin/check") {
-            const c = z.object({ service: ServiceName }).strict().parse(value);
-            await requireService(env, owner, c.service);
-            if (c.service === "calendar" || c.service === "contacts") {
+            const c = z
+              .object({ service: z.enum([...ServiceName.options, "findmy"]) })
+              .strict()
+              .parse(value);
+            if (c.service !== "findmy")
+              await requireService(env, owner, c.service);
+            if (c.service === "findmy") {
+              await findMyOperation(env, owner, (client) => client.list());
+            } else if (c.service === "calendar" || c.service === "contacts") {
               await (await DavClient.for(env, owner, c.service)).discover();
             } else if (c.service === "reminders") {
               const apple = new AppleConnectionService(env, owner);

@@ -1422,3 +1422,60 @@ test("server auth envelopes reject replay, mixed attempts and premature or incon
     fresh.consume({ ...hello, type: "complete", state: "READY" }),
   );
 });
+
+for (const flags of [
+  {},
+  { isDeviceConsentedForPCS: true },
+  { isICDRSDisabled: true },
+]) {
+  test(`omitted Apple web authorization flags require confirmed service access: ${JSON.stringify(flags)}`, async () => {
+    const h = scriptedHTTP([{ body: flags }, { body: { status: "success" } }]);
+    const r = await advancePcs(
+      h.http,
+      "123456789",
+      freshPcsCheckpoint(1000),
+      1000,
+      "notes3",
+    );
+    assert.equal(r.state, "READY");
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.requests[1].path, "/setup/ws/1/requestPCS");
+    assert.deepEqual(h.requests[1].body, {
+      appName: "notes3",
+      derivedFromUserAction: true,
+    });
+  });
+}
+test("omitted web flags do not treat an unconfirmed service response as authorized", async () => {
+  const h = scriptedHTTP([
+    { body: {} },
+    { body: { message: "Cookies not available yet on server." } },
+  ]);
+  const r = await advancePcs(
+    h.http,
+    "123456789",
+    freshPcsCheckpoint(1000),
+    1000,
+    "photos",
+  );
+  assert.equal(r.state, "DEVICE_APPROVAL_PENDING");
+  assert.equal(r.checkpoint.nextAttemptAt, 6000);
+});
+test("authorization rejects invalid flags and reports service protocol errors without secrets", async () => {
+  const h = scriptedHTTP([{ body: { isICDRSDisabled: "false" } }]);
+  await assert.rejects(
+    advancePcs(h.http, "123456789", freshPcsCheckpoint(1000), 1000),
+    (e: any) => e.code === "PROTOCOL_CHANGED",
+  );
+  const bad = scriptedHTTP([
+    { body: {} },
+    { body: { status: "private-sentinel", message: "private-sentinel" } },
+  ]);
+  await assert.rejects(
+    advancePcs(bad.http, "123456789", freshPcsCheckpoint(1000), 1000, "notes3"),
+    (e: any) =>
+      e.code === "PROTOCOL_CHANGED" &&
+      e.message.includes("requestPCS (notes3)") &&
+      !e.message.includes("private-sentinel"),
+  );
+});

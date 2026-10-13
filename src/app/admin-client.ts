@@ -34,6 +34,7 @@ export function mountAdmin(
     notes: "备忘录",
     photos: "照片",
     drive: "iCloud 云盘",
+    findmy: "查找",
   };
   const pcs: Record<string, string> = {
     reminders: "reminders",
@@ -44,7 +45,8 @@ export function mountAdmin(
   const hints: Record<string, string> = {
     NOT_CONNECTED: "请先配置对应凭证。",
     REAUTH_REQUIRED: "Apple 拒绝了凭证，请重新登录或更换 App 专用密码。",
-    DEVICE_APPROVAL_PENDING: "请在可信设备上批准，然后再次检查对应服务的 PCS。",
+    DEVICE_APPROVAL_PENDING:
+      "请点击“授权访问”，在 iPhone 或 iPad 上批准，再回来继续授权。",
     VERIFICATION_REQUIRED: "请重新登录并完成可信设备验证。",
     CONFLICT: "配置已变化，请刷新状态后再操作。",
     RATE_LIMITED: "请等待倒计时或稍后再试，勿连续点击。",
@@ -132,8 +134,10 @@ export function mountAdmin(
             : e.code === "UPSTREAM_UNAVAILABLE" && path === "/api/admin/status"
               ? "管理状态读取失败；此接口不请求 Apple，请记录请求编号并检查 Worker 数据库。"
               : (hints[e.code] ?? e.message ?? "操作未完成。")) +
-          (typeof e.message === "string" && e.message.startsWith("DAV ")
-            ? " 详情：" + e.message
+          (typeof e.message === "string" &&
+          (["PROTOCOL_CHANGED", "DEVICE_APPROVAL_PENDING"].includes(e.code) ||
+            e.message.startsWith("DAV "))
+            ? "\n详情：" + e.message
             : "") +
           (typeof e.requestId === "string" &&
           /^[a-f0-9-]{36}$/.test(e.requestId)
@@ -180,18 +184,26 @@ export function mountAdmin(
         !s ||
         (button.dataset.kind === "pcs"
           ? !current?.webSessionAvailable || seconds > 0
-          : !s.enabled || !s.credentialAvailable);
+          : !s.enabled ||
+            !s.credentialAvailable ||
+            (!!pcs[s.service] && !s.pcsReady));
       if (button.dataset.kind === "pcs")
         button.textContent =
-          seconds > 0 ? `等待 ${seconds} 秒后检查` : "申请 / 检查 PCS";
+          seconds > 0
+            ? `等待 ${seconds} 秒`
+            : s?.pcsReady
+              ? "更新授权"
+              : p
+                ? "继续授权"
+                : "授权访问";
     }
   }
   function render() {
     if (!current) return;
     el("web-state").textContent = current.webSessionAvailable
-      ? "网页会话已保存；各服务授权状态见下方。"
+      ? "已登录 Apple 账户"
       : current.web.state === "DISCONNECTED"
-        ? "尚未连接 Apple 网页会话。"
+        ? "尚未登录"
         : "网页会话尚不可用：" + current.web.state;
     el("expiry").textContent = current.web.expiresAt
       ? "本地会话最晚到期：" +
@@ -201,8 +213,8 @@ export function mountAdmin(
         ? "本地会话永久保留；Apple 仍可能要求重新验证。"
         : "";
     el("dav-state").textContent = current.dav.configured
-      ? "专用密码已加密保存。请分别检查日历与通讯录。"
-      : "尚未保存 App 专用密码。";
+      ? "专用密码已保存"
+      : "尚未设置专用密码";
     el("status").textContent = JSON.stringify(current, null, 2);
     el("services").replaceChildren();
     el("services").setAttribute("aria-busy", "false");
@@ -222,11 +234,15 @@ export function mountAdmin(
           ? "缺少可用凭证"
           : pcs[s.service]
             ? s.pcsReady
-              ? "PCS 已就绪（保存状态）"
-              : "需要 PCS 授权"
-            : "专用密码已保存");
+              ? "已授权"
+              : "待授权：先点击“授权访问”"
+            : s.service === "findmy"
+              ? "共用 Apple 登录，无需单独授权"
+              : "专用密码已保存");
       card.appendChild(status);
-      for (const key of ["enabled", "writable"] as const) {
+      for (const key of (s.service === "findmy"
+        ? []
+        : ["enabled", "writable"]) as ("enabled" | "writable")[]) {
         if (key === "writable" && pcs[s.service] && s.service !== "reminders")
           continue;
         const label = doc.createElement("label");
@@ -262,10 +278,11 @@ export function mountAdmin(
           });
         });
       }
-      if (["notes", "photos", "drive"].includes(s.service)) {
+      if (["notes", "photos", "drive", "findmy"].includes(s.service)) {
         const badge = doc.createElement("span");
         badge.className = "badge";
-        badge.textContent = "只读";
+        badge.textContent =
+          s.service === "findmy" ? "本人及家庭设备 · 播放声音需确认" : "只读";
         card.appendChild(badge);
       }
       const actions = doc.createElement("div");
@@ -275,7 +292,7 @@ export function mountAdmin(
         b.className = "secondary";
         b.dataset.service = s.service;
         b.dataset.kind = "pcs";
-        b.textContent = "申请 / 检查 PCS";
+        b.textContent = "授权访问";
         b.onclick = () =>
           void action(async () => {
             const r = await api(
@@ -288,14 +305,16 @@ export function mountAdmin(
                 : { service: pcs[s.service] },
             );
             return r.state === "READY"
-              ? names[s.service] + " PCS 授权就绪。现在可以检查服务。"
+              ? names[s.service] + "已授权，可以检查连接。"
               : names[s.service] +
-                  "授权尚未完成。请在可信设备批准，等待按钮倒计时后再次检查。";
+                  (r.action === "wait-for-reminders-keys"
+                    ? "正在准备数据访问，倒计时结束后点击“继续授权”。"
+                    : "请在 iPhone 或 iPad 上批准访问，倒计时结束后点击“继续授权”。");
           });
         actions.appendChild(b);
       }
       const check = doc.createElement("button");
-      check.textContent = "检查服务";
+      check.textContent = "检查连接";
       check.dataset.service = s.service;
       check.dataset.kind = "check";
       check.onclick = () =>
@@ -303,10 +322,9 @@ export function mountAdmin(
           const r = await api("/api/admin/check", { service: s.service });
           checks.set(
             s.service,
-            "本页只读检查通过：" +
-              new Date(r.checkedAt).toLocaleTimeString("zh-CN"),
+            "连接正常 · " + new Date(r.checkedAt).toLocaleTimeString("zh-CN"),
           );
-          return names[s.service] + "只读检查通过；这不代表所有操作均已验收。";
+          return names[s.service] + "连接正常。";
         });
       actions.appendChild(check);
       card.appendChild(actions);
@@ -328,7 +346,7 @@ export function mountAdmin(
     if (busy) return;
     busy = true;
     controls();
-    announce("正在处理，请勿重复操作…");
+    announce("正在处理…");
     try {
       const message = await run();
       try {
@@ -444,4 +462,3 @@ export function mountAdmin(
     },
   };
 }
-

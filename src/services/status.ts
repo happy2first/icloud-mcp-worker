@@ -52,23 +52,33 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
     webSessionAvailable,
     dav,
     pcsProgress,
-    services: permissions.map((c) => ({
-      ...c,
-      credentialAvailable: ["calendar", "contacts"].includes(c.service)
-        ? dav.configured
-        : webSessionAvailable,
-      pcsReady:
-        c.service === "notes"
-          ? !!pcs.notes3
-          : c.service === "photos"
-            ? !!pcs.photos
-            : c.service === "drive"
-              ? !!pcs.iclouddrive
-              : c.service === "reminders"
-                ? web.state === "READY"
-                : null,
-      realAppleValidated: false,
-    })),
+    services: [
+      ...permissions.map((c) => ({
+        ...c,
+        credentialAvailable: ["calendar", "contacts"].includes(c.service)
+          ? dav.configured
+          : webSessionAvailable,
+        pcsReady:
+          c.service === "notes"
+            ? !!pcs.notes3
+            : c.service === "photos"
+              ? !!pcs.photos
+              : c.service === "drive"
+                ? !!pcs.iclouddrive
+                : c.service === "reminders"
+                  ? web.state === "READY"
+                  : null,
+        realAppleValidated: false,
+      })),
+      {
+        service: "findmy",
+        enabled: webSessionAvailable,
+        writable: false,
+        credentialAvailable: webSessionAvailable,
+        pcsReady: null,
+        realAppleValidated: false,
+      },
+    ],
     findmy: {
       credentialAvailable: webSessionAvailable,
       authentication: "existing-apple-web-session",
