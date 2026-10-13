@@ -20,6 +20,7 @@ const account = element<HTMLInputElement>("account"),
 const verificationFields = element<HTMLFieldSetElement>("verification-fields");
 const panel = element<HTMLElement>("verification-panel"),
   retry = element<HTMLButtonElement>("retry-status");
+const region = element<HTMLElement & { value: string }>("region");
 const trust = element<HTMLInputElement>("apple-trust"),
   retention = element<HTMLInputElement>("retention");
 const message = element<HTMLParagraphElement>("message"),
@@ -107,8 +108,7 @@ function update(value: BrowserSignInUpdate) {
       RATE_LIMITED: "Apple 暂时限制请求，请等待后重试。",
       PROTOCOL_CHANGED:
         "Apple 接口返回了未支持的协议，请保留错误代码并检查项目更新。",
-      APPLE_REDIRECT_ERROR:
-        "Apple 登录跳转失败，请勿连续重试。",
+      APPLE_REDIRECT_ERROR: "Apple 登录跳转失败，请勿连续重试。",
       RESTART_REQUIRED: "本次登录已失效或连接中断，请重新发起。",
       UPSTREAM_UNAVAILABLE: "无法连接 Apple，请检查网络后重试。",
       TERMS_ACTION_REQUIRED:
@@ -117,7 +117,8 @@ function update(value: BrowserSignInUpdate) {
     announce(
       (value.code ? value.code + "：" : "") +
         (hints[value.code ?? ""] ?? "登录未完成，请重新发起。") +
-        "\n详情：" + value.message,
+        "\n详情：" +
+        value.message,
       true,
     );
   }
@@ -156,7 +157,11 @@ form.addEventListener("submit", (event) => {
       attempt = beginAppleSignIn(
         account.value.trim(),
         secret,
-        { appleTrust: trust.checked, persistentSession: retention.checked },
+        {
+          appleTrust: trust.checked,
+          persistentSession: retention.checked,
+          region: region.value === "cn" ? "cn" : "international",
+        },
         status.generation,
         (value) => {
           if (current === revision) update(value);

@@ -4,6 +4,8 @@ import { z } from "zod";
 import { AppError } from "../../errors.ts";
 import {
   AppleHTTP,
+  appleHome,
+  type AppleRegion,
   validatedAppleURL,
   APPLE_USER_AGENT,
   appleWebHeaders,
@@ -38,7 +40,7 @@ const CookieSchema = z
     domain: z
       .string()
       .max(253)
-      .regex(/^(?:[a-z0-9-]+\.)*(?:apple\.com|icloud\.com)$/),
+      .regex(/^(?:[a-z0-9-]+\.)*(?:apple\.com|icloud\.com(?:\.cn)?)$/),
     hostOnly: z.boolean(),
     path: z.string().max(4096).startsWith("/"),
     secure: z.boolean(),
@@ -47,6 +49,7 @@ const CookieSchema = z
   .strict();
 export const AuthSnapshotSchema = z
   .object({
+    region: z.enum(["international", "cn"]).optional(),
     clientId: z
       .string()
       .min(1)
@@ -115,6 +118,10 @@ export function object(value: unknown): Record<string, unknown> | null {
 
 export class AppleAuthHTTP {
   readonly http: AppleHTTP;
+  readonly region: AppleRegion;
+  get setupRoot() {
+    return `https://setup.icloud.com${this.region === "cn" ? ".cn" : ""}/setup/ws/1`;
+  }
   readonly clientId: string;
   private data: Partial<Record<(typeof responseHeaders)[number], string>> = {};
   private calls = 0;
@@ -123,7 +130,9 @@ export class AppleAuthHTTP {
     http = new AppleHTTP(),
     snapshot?: AuthSnapshot,
     signal?: AbortSignal,
+    region: AppleRegion = "international",
   ) {
+    this.region = snapshot?.region ?? region;
     this.http = http;
     this.signal = signal;
     if (snapshot) {
@@ -162,6 +171,7 @@ export class AppleAuthHTTP {
   }
   snapshot(): AuthSnapshot {
     return {
+      region: this.region,
       clientId: this.clientId,
       headers: { ...this.data },
       cookies: this.http.jar.snapshot(),
@@ -177,7 +187,7 @@ export class AppleAuthHTTP {
       "Content-Type": "application/json",
       "X-Apple-OAuth-Client-Id": APPLE_WIDGET,
       "X-Apple-OAuth-Client-Type": "firstPartyAuth",
-      "X-Apple-OAuth-Redirect-URI": "https://www.icloud.com",
+      "X-Apple-OAuth-Redirect-URI": appleHome(this.region),
       "X-Apple-OAuth-Require-Grant-Code": "true",
       "X-Apple-OAuth-Response-Mode": "web_message",
       "X-Apple-OAuth-Response-Type": "code",
@@ -210,7 +220,7 @@ export class AppleAuthHTTP {
       skVersion: "7",
       client_id: APPLE_WIDGET,
       response_type: "code",
-      redirect_uri: "https://www.icloud.com",
+      redirect_uri: appleHome(this.region),
       response_mode: "web_message",
       authVersion: "latest",
     }).toString();
@@ -231,14 +241,14 @@ export class AppleAuthHTTP {
     return this.send(AUTH_ROOT + path, method, body, this.authHeaders(extra));
   }
   setup(path: SetupPath, body?: unknown, dsid?: string) {
-    const url = new URL(SETUP_ROOT + path);
+    const url = new URL(this.setupRoot + path);
     url.search = new URLSearchParams({
       clientBuildNumber: CLIENT_BUILD,
       clientMasteringNumber: CLIENT_MASTERING,
       clientId: this.clientId,
       ...(dsid ? { dsid } : {}),
     }).toString();
-    return this.send(url.href, "POST", body, appleWebHeaders());
+    return this.send(url.href, "POST", body, appleWebHeaders(this.region));
   }
   private async send(
     url: string,
@@ -529,11 +539,11 @@ export class AppleAuthHTTP {
           // Validate each service independently, including services not currently enabled.
           const pattern =
             key === "ckdatabasews"
-              ? /^p\d{1,3}-ckdatabasews\.icloud\.com$/
+              ? /^p\d{1,3}-ckdatabasews\.icloud\.com(?:\.cn)?$/
               : key === "drivews"
-                ? /^p\d{1,3}-drivews\.icloud\.com$/
+                ? /^p\d{1,3}-drivews\.icloud\.com(?:\.cn)?$/
                 : key === "docws"
-                  ? /^p\d{1,3}-docws\.icloud\.com$/
+                  ? /^p\d{1,3}-docws\.icloud\.com(?:\.cn)?$/
                   : /^(?:p\d{1,3}-)?fmipweb\.icloud\.com(?:\.cn)?$/;
           if (
             url.protocol !== "https:" ||

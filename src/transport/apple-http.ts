@@ -20,18 +20,23 @@ type RequestStage =
   | "session-validation"
   | "service";
 // Pinned pyicloud carries this browser context across setup, PCS and CloudKit.
-export const appleWebHeaders = () => ({
+export type AppleRegion = "international" | "cn";
+export const appleHome = (region: AppleRegion = "international") =>
+  region === "cn" ? "https://www.icloud.com.cn" : "https://www.icloud.com";
+export const appleWebHeaders = (region: AppleRegion = "international") => ({
   "User-Agent": APPLE_USER_AGENT,
   Accept: "application/json",
   "Content-Type": "application/json",
-  Origin: "https://www.icloud.com",
-  Referer: "https://www.icloud.com/",
+  Origin: appleHome(region),
+  Referer: appleHome(region) + "/",
 });
 
 const fixed = new Set([
   "idmsa.apple.com",
   "setup.icloud.com",
+  "setup.icloud.com.cn",
   "www.icloud.com",
+  "www.icloud.com.cn",
 ]);
 export function validatedAppleURL(value: string, discovered = false): URL {
   let url: URL;
@@ -56,16 +61,16 @@ export function validatedAppleURL(value: string, discovered = false): URL {
       /^\/fmipservice\/client\/web\/(?:initClient|refreshClient|playSound)$/.test(
         url.pathname,
       )) ||
-      (/^p\d{1,3}-ckdatabasews\.icloud\.com$/.test(url.hostname) &&
+      (/^p\d{1,3}-ckdatabasews\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
         /^\/database\/1\/(?:com\.apple\.notes|com\.apple\.photos\.cloud)\/production\/private\/(?:records\/(?:query|lookup)|zones\/list|changes\/zone)$/.test(
           url.pathname,
         )) ||
-      (/^p\d{1,3}-drivews\.icloud\.com$/.test(url.hostname) &&
+      (/^p\d{1,3}-drivews\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
         url.pathname === "/retrieveItemDetailsInFolders") ||
-      (/^p\d{1,3}-docws\.icloud\.com$/.test(url.hostname) &&
+      (/^p\d{1,3}-docws\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
         /^\/ws\/com\.apple\.CloudDocs\/download\/by_id$/.test(url.pathname)));
   const cloudkit =
-    /^p\d{1,3}-ckdatabasews\.icloud\.com$/.test(url.hostname) &&
+    /^p\d{1,3}-ckdatabasews\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
     (/^\/database\/1\/com\.apple\.reminders\/production\/private(?:\/|$)/.test(
       url.pathname,
     ) ||
@@ -230,7 +235,9 @@ export class AppleHTTP {
           !(
             options.allowAccountLogin302Body === true &&
             options.stage === "account-login" &&
-            url.hostname === "setup.icloud.com" &&
+            ["setup.icloud.com", "setup.icloud.com.cn"].includes(
+              url.hostname,
+            ) &&
             url.pathname === "/setup/ws/1/accountLogin" &&
             method === "POST" &&
             response.status === 302 &&

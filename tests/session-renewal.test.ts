@@ -237,3 +237,34 @@ test("Find My discovery preserves valid roots and rejects hostile optional roots
     );
   }
 });
+
+test("restored mainland sessions validate and request PCS using their saved region", async () => {
+  const saved = { ...snapshot(), region: "cn" as const, cookies: [] };
+  const requests: { url: URL; headers: Headers }[] = [];
+  const http = AppleAuthHTTP.restore(saved, (async (input, init) => {
+    requests.push({
+      url: new URL(String(input)),
+      headers: new Headers(init?.headers),
+    });
+    return Response.json({
+      hsaTrustedBrowser: true,
+      dsInfo: { dsid: "123456789" },
+      webservices: {
+        ckdatabasews: { url: "https://p123-ckdatabasews.icloud.com.cn" },
+        drivews: { url: "https://p123-drivews.icloud.com.cn" },
+      },
+    });
+  }) as typeof fetch);
+  await http.validateSession("123456789");
+  await http.setup("/requestPCS", { appName: "photos" });
+  assert.equal(requests.length, 2);
+  for (const r of requests) {
+    assert.equal(r.url.hostname, "setup.icloud.com.cn");
+    assert.equal(r.headers.get("origin"), "https://www.icloud.com.cn");
+    assert.equal(r.headers.get("referer"), "https://www.icloud.com.cn/");
+  }
+  assert.equal(AppleAuthHTTP.restore(snapshot()).region, "international");
+  assert.throws(() =>
+    AppleAuthHTTP.restore({ ...saved, region: "hostile.invalid" }),
+  );
+});

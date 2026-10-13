@@ -999,7 +999,7 @@ export class CloudKitRemindersClient {
     const hasSessionCookie = this.http.jar.header(url).length > 0;
     const response = await this.http.request(url.href, {
       method: "POST",
-      headers: appleWebHeaders(),
+      headers: appleWebHeaders(url.hostname.endsWith(".icloud.com.cn") ? "cn" : "international"),
       body,
       discovered: true,
       followRedirects: path !== "/records/modify",

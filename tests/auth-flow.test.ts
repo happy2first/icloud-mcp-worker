@@ -232,6 +232,7 @@ test("phone, voice and legacy trusted-device routes stop before verification, tr
 
 function bridgeHarness(
   options: {
+    region?: "cn" | "international";
     validation?: Reply;
     trust?: ReplyPlan[];
     account?: Reply;
@@ -381,6 +382,7 @@ function bridgeHarness(
     new AppleHTTP(new CookieJar(), send),
     undefined,
     signal,
+    options.region,
   );
   const connect = async (url: string, connectSignal: AbortSignal) => {
     events.push("connect");
@@ -715,6 +717,50 @@ test("account trust diagnostics distinguish missing flags without exposing Apple
     },
   );
   assert.equal(h.saved(), null);
+});
+
+test("mainland device login uses China setup and persists region for restoration", async () => {
+  const h = bridgeHarness({
+    region: "cn",
+    account: {
+      body: {
+        ...accountReply,
+        webservices: {
+          ckdatabasews: { url: "https://p123-ckdatabasews.icloud.com.cn" },
+        },
+      },
+      cookies: [
+        "X-APPLE-WEBAUTH-TOKEN=synthetic; Domain=.icloud.com.cn; Path=/; Secure",
+      ],
+    },
+  });
+  await bridgeUntilValidation(h.flow);
+  const done = await h.flow.advance({
+    type: "bridge-validation",
+    ...binding,
+    sequence: 4,
+    code: fixtures.bridge.plaintext,
+  });
+  assert.equal(done.type, "complete");
+  const account = h.requests.find((r) => r.path.endsWith("/accountLogin"))!;
+  assert.equal(account.url.hostname, "setup.icloud.com.cn");
+  assert.equal(account.headers.get("origin"), "https://www.icloud.com.cn");
+  assert.equal(
+    h.requests[0].url.searchParams.get("redirect_uri"),
+    "https://www.icloud.com.cn",
+  );
+  assert.equal(h.saved().session.auth.region, "cn");
+  assert.match(h.saved().session.connection.cloudKitURL, /icloud.com.cn/);
+  const restored = AppleAuthHTTP.restore(h.saved().session.auth);
+  assert.equal(restored.setupRoot, "https://setup.icloud.com.cn/setup/ws/1");
+  assert.match(
+    restored.http.jar.header(new URL(restored.setupRoot)),
+    /WEBAUTH-TOKEN=synthetic/,
+  );
+  assert.equal(
+    restored.http.jar.header(new URL("https://setup.icloud.com/setup/ws/1")),
+    "",
+  );
 });
 
 test("missing browser-trust redirect destination never saves a verified-device session as logged in", async () => {

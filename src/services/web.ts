@@ -224,7 +224,7 @@ export class WebClient {
     for (const [k, v] of this.params()) url.searchParams.set(k, v);
     const r = await this.auth.http.request(url.href, {
       discovered: true,
-      headers: appleWebHeaders(),
+      headers: appleWebHeaders(this.auth.region),
       method: payload === undefined ? "GET" : "POST",
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });

@@ -11,7 +11,6 @@ import {
   AppleAuthHTTP,
   AppleAuthenticationError,
   AppleRetryError,
-  SETUP_ROOT,
 } from "./http.ts";
 
 const time = z
@@ -107,7 +106,7 @@ function checkDue(session: AppleSession, interval: number, now: number) {
   // Unknown cookie expiry is not evidence of Apple validity. Only the required
   // web-auth cookie's known expiry accelerates an otherwise recent check.
   const http = AppleAuthHTTP.restore(session.auth);
-  const url = new URL(`${SETUP_ROOT}/validate`);
+  const url = new URL(`${http.setupRoot}/validate`);
   const cookies = http.http.jar.header(url, now);
   if (
     !cookies

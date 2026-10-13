@@ -42,8 +42,8 @@ export class CookieJar {
         const candidate = attribute.replace(/^\./, "").toLowerCase();
         // No public-suffix or unrelated-domain cookies, even from an allowlisted service.
         if (
-          !/^(?:[a-z0-9-]+\.)+(?:apple\.com|icloud\.com)$/.test(candidate) &&
-          !["apple.com", "icloud.com"].includes(candidate)
+          !/^(?:[a-z0-9-]+\.)+(?:apple\.com|icloud\.com(?:\.cn)?)$/.test(candidate) &&
+          !["apple.com", "icloud.com", "icloud.com.cn"].includes(candidate)
         )
           return;
         if (

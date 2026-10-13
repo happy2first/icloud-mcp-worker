@@ -11,7 +11,9 @@ export function assetURL(value: string) {
     u.password ||
     u.port ||
     u.hash ||
-    !/^(?:[a-z0-9-]+\.)*(?:icloud-content\.com|icloud\.com)$/.test(u.hostname)
+    !/^(?:[a-z0-9-]+\.)*(?:icloud-content\.com|icloud\.com(?:\.cn)?)$/.test(
+      u.hostname,
+    )
   )
     throw new AppError(
       "PROTOCOL_CHANGED",

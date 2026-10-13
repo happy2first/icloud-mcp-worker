@@ -102,7 +102,7 @@ npm run test:worker
 npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 ```
 
-当前验收结果见 [验收记录](docs/VALIDATION.md)。真实 Apple 和生产 Cloudflare 验收尚未通过。对中国区 `.icloud.com.cn` 服务、地域/风控差异、Apple 私有协议变化及真实设备 2FA/WebSocket 兼容性，当前均没有实测证据。现有白名单只支持 `.icloud.com`，发现其他地域服务会明确拒绝，不应直接扩大到任意域名。
+当前验收结果见 [验收记录](docs/VALIDATION.md)。真实 Apple 和生产 Cloudflare 验收尚未通过。对中国区 `.icloud.com.cn` 服务、地域/风控差异、Apple 私有协议变化及真实设备 2FA/WebSocket 兼容性，当前均没有实测证据。网页登录现支持国际区和云上贵州区域选择；大陆区使用 `.icloud.com.cn` 端点并在会话中保存区域。已有无区域字段的会话按国际区恢复，需重新登录并选择大陆区。DAV 日历和通讯录的大陆区兼容性仍需单独验证。
 
 
 ## Apple 查找（Find My）

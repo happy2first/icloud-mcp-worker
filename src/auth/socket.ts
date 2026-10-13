@@ -45,7 +45,12 @@ export async function appleAuthSocket(
   const query = new URL(request.url).searchParams;
   const generation = query.get("generation") ?? "";
   if (
-    query.size !== 1 ||
+    query.size !== (query.has("region") ? 2 : 1) ||
+    query.getAll("generation").length !== 1 ||
+    query.getAll("region").length > 1 ||
+    [...query.keys()].some((key) => !["generation", "region"].includes(key)) ||
+    (query.has("region") &&
+      !["cn", "international"].includes(query.get("region")!)) ||
     !/^(0|[1-9][0-9]{0,15})$/.test(generation) ||
     !Number.isSafeInteger(Number(generation))
   )
@@ -74,7 +79,12 @@ export async function appleAuthSocket(
     );
   const closed = () => phase === "closed";
   const flow = new AppleSignInFlow(
-    new AppleAuthHTTP(undefined, undefined, abort.signal),
+    new AppleAuthHTTP(
+      undefined,
+      undefined,
+      abort.signal,
+      query.get("region") === "cn" ? "cn" : "international",
+    ),
     abort.signal,
     async (session, result) => {
       if (abort.signal.aborted || closed())

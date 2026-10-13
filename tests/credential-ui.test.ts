@@ -200,24 +200,69 @@ for (const detail of [
   "Apple browser-trust: redirect response has no Location header (HTTP 302, redirects 0/8).",
   "Apple device-verification: redirect loop without session progress (HTTP 302, redirects 2/3).",
   "Apple browser-trust: redirect limit exceeded (HTTP 302, redirects 8/8).",
-]) test(`login preserves actionable redirect detail: ${detail}`, async () => {
-  let update: any;
+])
+  test(`login preserves actionable redirect detail: ${detail}`, async () => {
+    let update: any;
+    const h = await setup(
+      (async () => Response.json(goodStatus)) as typeof fetch,
+      (_a: any, _p: any, _c: any, _g: any, cb: any) => {
+        update = cb;
+        return { cancel() {} };
+      },
+    );
+    try {
+      await h.settle();
+      h.el("account").value = "synthetic@example.invalid";
+      h.el("password").value = "synthetic-primary";
+      h.el("credentials").dispatchEvent(
+        new h.window.Event("submit", { cancelable: true }),
+      );
+      await h.settle();
+      update({
+        state: "failed",
+        code: "APPLE_REDIRECT_ERROR",
+        message: detail,
+      });
+      assert.ok(h.el("message").textContent.includes(detail));
+      assert.equal(h.el("fields").disabled, false);
+      assert.equal(h.el("password").value, "");
+    } finally {
+      h.destroy();
+    }
+  });
+
+test("login page exposes mainland and international choices and forwards the selected region", async () => {
+  let selected: string | undefined;
   const h = await setup(
     (async () => Response.json(goodStatus)) as typeof fetch,
-    (_a: any, _p: any, _c: any, _g: any, cb: any) => {
-      update = cb;
+    (_a: any, _p: any, consent: any) => {
+      selected = consent.region;
       return { cancel() {} };
     },
   );
   try {
     await h.settle();
-    h.el("account").value = "synthetic@example.invalid";
-    h.el("password").value = "synthetic-primary";
-    h.el("credentials").dispatchEvent(new h.window.Event("submit", { cancelable: true }));
-    await h.settle();
-    update({ state: "failed", code: "APPLE_REDIRECT_ERROR", message: detail });
-    assert.ok(h.el("message").textContent.includes(detail));
-    assert.equal(h.el("fields").disabled, false);
-    assert.equal(h.el("password").value, "");
-  } finally { h.destroy(); }
+    assert.equal(
+      h.el("region").querySelector('[value="cn"]').hasAttribute("selected"),
+      true,
+    );
+    assert.ok(h.el("region").querySelector('[value="international"]'));
+    for (const region of ["cn", "international"]) {
+      // linkedom has no native select value setter; model browser selection.
+      Object.defineProperty(h.el("region"), "value", {
+        configurable: true,
+        value: region,
+      });
+      h.el("account").value = "synthetic@example.invalid";
+      h.el("password").value = "synthetic";
+      h.el("credentials").dispatchEvent(
+        new h.window.Event("submit", { cancelable: true }),
+      );
+      await h.settle();
+      assert.equal(selected, region);
+      h.el("cancel").click();
+    }
+  } finally {
+    h.destroy();
+  }
 });

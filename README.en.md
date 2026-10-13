@@ -98,7 +98,7 @@ npm run test:worker
 npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 ```
 
-See [validation evidence](docs/VALIDATION.md). Real Apple and production Cloudflare verification are pending. China-region `.icloud.com.cn` endpoints, account-specific risk controls and real-device WebSocket authentication have not been tested; the current allowlists support `.icloud.com` only and reject unrecognized regional services.
+See [validation evidence](docs/VALIDATION.md). Real Apple and production Cloudflare verification are pending. China-region `.icloud.com.cn` endpoints, account-specific risk controls and real-device WebSocket authentication have not been tested; web login now provides international/mainland selection, retains the region in encrypted sessions, and supports allowlisted `.icloud.com.cn` web service endpoints. Legacy sessions without a region remain international; reconnect to select mainland. Mainland DAV compatibility remains a separate validation item.
 
 
 ## Apple Find My

@@ -64,7 +64,7 @@ npx wrangler deploy --config wrangler.local.toml
 
 高级数据保护按当前需求保持关闭，无需为本项目修改已有安全保护。网页服务还需允许 iCloud 网页数据访问。Apple 官方说明的设置入口是：新系统“设置 → 你的姓名 → iCloud → iCloud.com → 允许数据访问”；较早系统在 iCloud 设置中直接显示“在网页上访问 iCloud 数据”。以设备实际标签为准，参考 [Apple 网页访问说明](https://support.apple.com/en-us/102630)。此项目的目录内文件筛选不是 Apple 新增的设备端全局搜索。
 
-首次建议在 [iCloud.com](https://www.icloud.com/) 确认相关数据可见，处理 Apple 要求的账户解锁或条款更新。该步骤不向 Worker 导入凭证，也不需要抓取浏览器 Token。当前仅支持 `.icloud.com` 服务地址；`.icloud.com.cn` 尚未支持，不可视为同一已验证区域。
+首次建议在 [iCloud.com](https://www.icloud.com/) 确认相关数据可见，处理 Apple 要求的账户解锁或条款更新。该步骤不向 Worker 导入凭证，也不需要抓取浏览器 Token。登录页选择对应服务区域：中国大陆（云上贵州）或国际区。大陆区使用 `.icloud.com.cn`，所选区域随加密会话保存，恢复时自动沿用，无需新增环境变量。旧会话没有区域字段时仍按国际区恢复；大陆区账户应重新登录一次。大陆区网页流程已通过模拟测试，尚待真实 Apple 验收；DAV 日历/通讯录仍需单独验证。
 
 ## 3. 两类凭证的区别
 
