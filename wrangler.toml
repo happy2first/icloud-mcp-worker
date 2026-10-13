@@ -4,6 +4,16 @@ compatibility_date = "2026-07-30"
 workers_dev = false
 preview_urls = false
 keep_vars = true
+[observability]
+enabled = true
+redact_query_string = true
+[observability.logs]
+enabled = true
+invocation_logs = true
+[observability.traces]
+enabled = true
+[observability.issues]
+enabled = true
 [build]
 command = "npm run build"
 # Dashboard runtime variables: TEAM_DOMAIN, POLICY_AUD.
