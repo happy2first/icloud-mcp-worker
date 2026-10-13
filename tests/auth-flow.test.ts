@@ -233,6 +233,7 @@ test("phone, voice and legacy trusted-device routes stop before verification, tr
 function bridgeHarness(
   options: {
     validation?: Reply;
+    trust?: ReplyPlan[];
     account?: Reply;
     stepZero?: ReplyPlan;
     pushIdentity?: string;
@@ -350,7 +351,7 @@ function bridgeHarness(
     { status: 204 },
     options.validation ?? { status: 200, headers: authenticatedHeaders }, // bridge/code/validate
     { status: 204 }, // bridge/step/6 with "done"
-    { status: 204 }, // trust browser
+    ...(options.trust ?? [{ status: 204 }]), // trust browser
     options.account ?? { body: accountReply },
   ];
   const signal = new AbortController().signal;
@@ -590,6 +591,71 @@ async function bridgeUntilValidation(flow: AppleSignInFlow) {
     data: b64(unhex(fixtures.bridge.confirmation)),
   });
 }
+test("verified device login survives four browser-trust redirects and preserves intermediate session tokens", async () => {
+  const h = bridgeHarness({
+    trust: [
+      {
+        status: 302,
+        headers: {
+          location: "/appleauth/auth/2sv/trust?step=1",
+          "X-Apple-Session-Token": "redirect-session-token",
+          "set-cookie": "trust=synthetic-cookie; Path=/; Secure",
+        },
+      },
+      {
+        status: 303,
+        headers: {
+          location: "/appleauth/auth/2sv/trust?step=2",
+          scnt: "redirect-scnt",
+        },
+      },
+      {
+        status: 302,
+        headers: { location: "/appleauth/auth/2sv/trust?step=3" },
+      },
+      {
+        status: 302,
+        headers: { location: "/appleauth/auth/2sv/trust?step=4" },
+      },
+      { status: 204 },
+    ],
+  });
+  await bridgeUntilValidation(h.flow);
+  const done = await h.flow.advance({
+    type: "bridge-validation",
+    ...binding,
+    sequence: 4,
+    code: fixtures.bridge.plaintext,
+  });
+  assert.equal(done.type, "complete");
+  assert.ok(h.saved());
+  const trust = h.requests.filter((r) => r.path.endsWith("/2sv/trust"));
+  assert.equal(trust.length, 5);
+  assert.equal(trust[2].headers.get("scnt"), "redirect-scnt");
+  assert.ok(trust[1].headers.get("cookie")?.includes("trust=synthetic-cookie"));
+  const account = h.requests.find((r) => r.path.endsWith("/accountLogin"));
+  assert.equal((account!.body as any).dsWebAuthToken, "redirect-session-token");
+  assert.equal(h.saved()!.session.auth.headers.scnt, "redirect-scnt");
+});
+
+test("missing browser-trust redirect destination never saves a verified-device session as logged in", async () => {
+  const h = bridgeHarness({ trust: [{ status: 302 }] });
+  await bridgeUntilValidation(h.flow);
+  await assert.rejects(
+    h.flow.advance({
+      type: "bridge-validation",
+      ...binding,
+      sequence: 4,
+      code: fixtures.bridge.plaintext,
+    }),
+    (error: any) =>
+      error.code === "APPLE_REDIRECT_ERROR" &&
+      /browser-trust.*no Location/.test(error.message),
+  );
+  assert.equal(h.saved(), null);
+  assert.ok(!h.requests.some((r) => r.path.endsWith("/accountLogin")));
+});
+
 test("bridge failures and Apple terms cannot be treated as successful device verification", async () => {
   for (const validation of [
     { status: 412 },

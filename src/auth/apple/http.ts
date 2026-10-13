@@ -7,6 +7,7 @@ import {
   validatedAppleURL,
   APPLE_USER_AGENT,
   appleWebHeaders,
+  APPLE_SESSION_RESPONSE_HEADERS,
 } from "../../transport/apple-http.ts";
 import { CookieJar, type Cookie } from "../../transport/cookie-jar.ts";
 import { requireNoAppleRejection } from "./policy.ts";
@@ -18,14 +19,7 @@ export const APPLE_WIDGET =
 export { APPLE_USER_AGENT } from "../../transport/apple-http.ts";
 export const CLIENT_BUILD = "2534Project66";
 export const CLIENT_MASTERING = "2534B22";
-const responseHeaders = [
-  "X-Apple-ID-Account-Country",
-  "X-Apple-ID-Session-Id",
-  "X-Apple-Auth-Attributes",
-  "X-Apple-Session-Token",
-  "X-Apple-TwoSV-Trust-Token",
-  "scnt",
-] as const;
+const responseHeaders = APPLE_SESSION_RESPONSE_HEADERS;
 const token = z
   .string()
   .max(16_384)
@@ -262,6 +256,16 @@ export class AppleAuthHTTP {
       method,
       headers,
       signal: this.signal,
+      maxRedirects: method === "GET" ? 8 : 3,
+      stage: new URL(url).pathname.endsWith("/2sv/trust")
+        ? "browser-trust"
+        : new URL(url).pathname.endsWith("/accountLogin")
+          ? "account-login"
+          : new URL(url).pathname.endsWith("/validate")
+            ? "session-validation"
+            : /\/(?:bridge|verify)\//.test(new URL(url).pathname)
+              ? "device-verification"
+              : "authentication",
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     for (const name of responseHeaders) {

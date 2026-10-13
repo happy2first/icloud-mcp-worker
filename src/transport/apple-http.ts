@@ -3,6 +3,22 @@ import { CookieJar } from "./cookie-jar.ts";
 
 export const APPLE_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15";
+export const APPLE_SESSION_RESPONSE_HEADERS = [
+  "X-Apple-ID-Account-Country",
+  "X-Apple-ID-Session-Id",
+  "X-Apple-Auth-Attributes",
+  "X-Apple-Session-Token",
+  "X-Apple-TwoSV-Trust-Token",
+  "scnt",
+] as const;
+const redirectStatuses = [301, 302, 303, 307, 308];
+type RequestStage =
+  | "authentication"
+  | "device-verification"
+  | "browser-trust"
+  | "account-login"
+  | "session-validation"
+  | "service";
 // Pinned pyicloud carries this browser context across setup, PCS and CloudKit.
 export const appleWebHeaders = () => ({
   "User-Agent": APPLE_USER_AGENT,
@@ -125,6 +141,8 @@ export class AppleHTTP {
       discovered?: boolean;
       signal?: AbortSignal;
       followRedirects?: boolean;
+      maxRedirects?: number;
+      stage?: RequestStage;
     } = {},
   ) {
     let url = validatedAppleURL(value, options.discovered);
@@ -133,6 +151,21 @@ export class AppleHTTP {
     const headers = new Headers(options.headers);
     headers.delete("cookie");
     headers.delete("authorization");
+    const maxRedirects = options.maxRedirects ?? 3;
+    requireValue(
+      Number.isInteger(maxRedirects) && maxRedirects >= 0 && maxRedirects <= 8,
+      "Invalid Apple redirect limit.",
+    );
+    const stage = options.stage ?? "service";
+    const sessionHeaders = new Headers();
+    const visited = new Set<string>();
+    let lastRedirectStatus = 0;
+    const redirectError = (reason: string, status: number, hop: number) =>
+      new AppError(
+        "APPLE_REDIRECT_ERROR",
+        `Apple ${stage}: ${reason} (HTTP ${status}, redirects ${hop}/${maxRedirects}).`,
+        409,
+      );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     const cancelled = () => controller.abort();
@@ -140,10 +173,25 @@ export class AppleHTTP {
     if (signal?.aborted) cancelled();
     else signal?.addEventListener("abort", cancelled, { once: true });
     try {
-      for (let hop = 0; hop <= 3; hop++) {
+      for (let hop = 0; hop <= maxRedirects; hop++) {
         const currentHeaders = new Headers(headers);
         const cookie = this.jar.header(url);
         if (cookie) currentHeaders.set("cookie", cookie);
+        // Keep loop fingerprints private. A repeated URL can legitimately advance
+        // through cookie/session challenges, but an identical request must stop.
+        const fingerprint = JSON.stringify([
+          url.href,
+          method,
+          body,
+          [...currentHeaders],
+        ]);
+        if (visited.has(fingerprint))
+          throw redirectError(
+            "redirect loop without session progress",
+            lastRedirectStatus,
+            hop,
+          );
+        visited.add(fingerprint);
         const response = await this.send(url, {
           method,
           body,
@@ -162,16 +210,38 @@ export class AppleHTTP {
           );
         for (const line of response.headers.getSetCookie?.() ?? [])
           this.jar.set(line, url);
+        for (const name of APPLE_SESSION_RESPONSE_HEADERS) {
+          const value = response.headers.get(name);
+          if (value !== null) {
+            if (value.length > 16384 || /[\r\n\x00]/.test(value)) {
+              await response.body?.cancel().catch(() => {});
+              throw new AppError(
+                "PROTOCOL_CHANGED",
+                "Apple returned invalid session headers.",
+              );
+            }
+            sessionHeaders.set(name, value);
+          }
+        }
         if (
           options.followRedirects !== false &&
-          [301, 302, 303, 307, 308].includes(response.status)
+          redirectStatuses.includes(response.status)
         ) {
+          lastRedirectStatus = response.status;
           const location = response.headers.get("location");
           await response.body?.cancel();
-          requireValue(
-            location && hop < 3,
-            "The Apple redirect budget was exceeded.",
-          );
+          if (!location)
+            throw redirectError(
+              "redirect response has no Location header",
+              response.status,
+              hop,
+            );
+          if (hop >= maxRedirects)
+            throw redirectError(
+              "redirect limit exceeded",
+              response.status,
+              hop,
+            );
           const next = validatedAppleURL(
             new URL(location, url).href,
             options.discovered,
@@ -181,6 +251,14 @@ export class AppleHTTP {
             next.origin === url.origin,
             "Apple requested an unsupported cross-origin redirect.",
           );
+          if (options.stage && options.stage !== "service")
+            for (const name of [
+              "scnt",
+              "X-Apple-ID-Session-Id",
+              "X-Apple-Auth-Attributes",
+            ])
+              if (sessionHeaders.has(name))
+                headers.set(name, sessionHeaders.get(name)!);
           if (
             response.status === 303 ||
             ((response.status === 301 || response.status === 302) &&
@@ -194,11 +272,14 @@ export class AppleHTTP {
           continue;
         }
         const bytes = await limitedBytes(response);
-        return { status: response.status, headers: response.headers, bytes };
+        const finalHeaders = new Headers(response.headers);
+        for (const [name, value] of sessionHeaders)
+          finalHeaders.set(name, value);
+        return { status: response.status, headers: finalHeaders, bytes };
       }
       throw new AppError(
-        "PROTOCOL_CHANGED",
-        "The Apple redirect budget was exceeded.",
+        "APPLE_REDIRECT_ERROR",
+        `Apple ${stage}: redirect limit exceeded.`,
       );
     } catch (e) {
       if (e instanceof AppError) throw e;

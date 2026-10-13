@@ -84,6 +84,8 @@ npx wrangler deploy --config wrangler.local.toml
 
 一次交互最多三分钟。手机切换应用、网络变化或浏览器进入后台可能中断 WebSocket，当前未做 iPhone 实机认证；出现连接失效时返回管理页先确认会话是否已保存，再决定重新登录。页面不会接收聊天中的密码或验证码，也没有浏览器扩展导入路径。
 
+如果出现 APPLE_REDIRECT_ERROR，详情只显示阶段、HTTP 状态和次数：browser-trust 是设备验证后的浏览器信任，device-verification 是设备验证，account-login 是账户会话建立。no Location 表示 Apple 返回跳转状态但缺少地址，loop 表示请求未发生会话进展而循环，limit exceeded 表示超过有界跳转预算。三者都不表示登录成功，也不能仅凭输入验证码判断 Apple 已接受。部署最新代码后重新发起一次登录；若仍失败，保留此安全错误详情，不发送 URL 查询参数、Cookie、Token 或验证码，不连续重试。
+
 新网页会话在本地永久保留，直到主动断开或确认 Apple 拒绝该账户会话；不再设置人为到期时间。Apple 自身的 Cookie/Token 有效期及 PCS 授权仍由 Apple 决定，永久保存不代表永久可用。旧版本保存的 1/30 天会话可以继续解密，重新登录一次才采用永久策略，不改写旧认证证据。状态读取失败时点“重新检查登录状态”；若 Access 已过期，重新打开管理页完成 Access 登录。登录交互、PCS 检查、分页游标及临时下载链接仍有自己的短期时限。
 
 ## 5. 分别申请 PCS 并开启四项网页服务

@@ -235,6 +235,50 @@ test("oversized decompression and upstream error material fail safely", () => {
   assert.ok(!JSON.stringify(safe).includes("sentinel-secret"));
 });
 
+test("Apple redirect loops and excessive chains are bounded without exposing query tokens or session values", async () => {
+  let loops = 0;
+  const send = (async () => {
+    loops++;
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: "/appleauth/auth/2sv/trust?token=synthetic-private-query",
+      },
+    });
+  }) as typeof fetch;
+  await assert.rejects(
+    new AppleHTTP(new CookieJar(), send).request(
+      "https://idmsa.apple.com/appleauth/auth/2sv/trust?token=synthetic-private-query",
+      {
+        maxRedirects: 8,
+        stage: "browser-trust",
+        headers: { scnt: "synthetic-private-header" },
+      },
+    ),
+    (error: any) =>
+      error.code === "APPLE_REDIRECT_ERROR" &&
+      /loop.*HTTP 302/.test(error.message) &&
+      !error.message.includes("private"),
+  );
+  assert.equal(loops, 1);
+  let hops = 0;
+  const chain = (async () =>
+    new Response(null, {
+      status: 302,
+      headers: { location: "/appleauth/auth/2sv/trust?step=" + ++hops },
+    })) as typeof fetch;
+  await assert.rejects(
+    new AppleHTTP(new CookieJar(), chain).request(
+      "https://idmsa.apple.com/appleauth/auth/2sv/trust",
+      { maxRedirects: 8, stage: "browser-trust" },
+    ),
+    (error: any) =>
+      error.code === "APPLE_REDIRECT_ERROR" &&
+      /limit exceeded.*8\/8/.test(error.message),
+  );
+  assert.equal(hops, 9);
+});
+
 test("API authorization precedes storage, with CSRF and disabled live operations", async () => {
   const origin = "https://private.example.test";
   const env = { REMINDERS_OWNER_ID: "synthetic-owner", APP_ORIGIN: origin };

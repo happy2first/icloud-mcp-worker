@@ -107,6 +107,8 @@ function update(value: BrowserSignInUpdate) {
       RATE_LIMITED: "Apple 暂时限制请求，请等待后重试。",
       PROTOCOL_CHANGED:
         "Apple 接口返回了未支持的协议，请保留错误代码并检查项目更新。",
+      APPLE_REDIRECT_ERROR:
+        "Apple 登录跳转失败。详情会区分缺少跳转地址、循环及次数超限，并标明验证或浏览器信任阶段；不要连续重试。",
       RESTART_REQUIRED: "本次登录已失效或连接中断，请重新发起。",
       UPSTREAM_UNAVAILABLE: "无法连接 Apple，请检查网络后重试。",
       TERMS_ACTION_REQUIRED:
