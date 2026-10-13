@@ -63,6 +63,8 @@ export function mountAdmin(
     RESTART_REQUIRED: "本次授权需重试，请刷新状态后操作。",
   };
   const configurationHints: Record<string, string> = {
+    "The runtime Secret ENCRYPTION_KEYS_JSON is missing.":
+      "Worker 未读取到运行时 Secret ENCRYPTION_KEYS_JSON。请核对它是否配置在当前 Worker 的“变量和机密”，而不是仅配置在构建环境中，并重新部署；不要更换已有密钥。",
     "ENCRYPTION_KEYS_JSON must contain a 32-byte key encoded as Base64, without JSON or quotes.":
       "加密 Secret ENCRYPTION_KEYS_JSON 未配置或格式错误。请在 Worker 的运行时 Secret 中填写 32 字节密钥的标准 Base64 字符串（44 个字符、末尾为 =），不要填写 32 个普通字符或引号；已有凭证时不要更换密钥。",
     "Each encryption key must contain exactly 32 bytes.":

@@ -158,6 +158,12 @@ export class Envelopes {
 // Operators paste only Base64. Legacy JSON remains accepted for existing deployments.
 export function envelopesFromSecret(secret?: string): Envelopes {
   const value = secret?.trim() ?? "";
+  if (!value)
+    throw new AppError(
+      "CONFIGURATION_REQUIRED",
+      "The runtime Secret ENCRYPTION_KEYS_JSON is missing.",
+      503,
+    );
   if (!value.startsWith("{")) {
     try {
       const bytes = unb64(value, 32);

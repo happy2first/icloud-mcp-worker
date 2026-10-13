@@ -297,11 +297,21 @@ export function createCloudflareAccessHandler(
 
     // Per-request context, derived only after signature/issuer/audience validation.
     // Never mutate the shared Workers env or accept caller identity headers.
-    return next(withVerifiedIdentity(request, identity), {
-      ...env,
+    const identityContext = {
       APP_ORIGIN: config.appOrigin,
       REMINDERS_OWNER_ID: identity.sub,
+    };
+    // A spread only copies enumerable own properties. Runtime bindings may be
+    // inherited or getter-backed; forward reads to the original env receiver.
+    // The separate target also works with frozen/non-configurable env bindings.
+    const requestEnv = new Proxy(identityContext as CloudflareAccessEnv, {
+      get(target, property) {
+        if (property === "APP_ORIGIN" || property === "REMINDERS_OWNER_ID")
+          return Reflect.get(target, property, target);
+        return Reflect.get(env, property, env);
+      },
     });
+    return next(withVerifiedIdentity(request, identity), requestEnv);
   };
 }
 

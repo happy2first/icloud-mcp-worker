@@ -7,6 +7,7 @@ import {
   type FetchImplementation,
 } from "jose";
 import { applicationRoute } from "../src/api/router.ts";
+import { envelopesFromSecret } from "../src/crypto/envelopes.ts";
 import {
   createCloudflareAccessHandler,
   type CloudflareAccessEnv,
@@ -200,6 +201,65 @@ test("minimal Access config derives isolated identity and origin without trustin
     },
   );
   assert.equal(insecure.status, 503);
+});
+
+test("runtime bindings survive request identity scoping when Secrets use non-enumerable getters", async () => {
+  const { handle } = harness();
+  const secret = btoa(String.fromCharCode(...new Uint8Array(32)));
+  const storage = { marker: "synthetic-D1-binding" };
+  const env: CloudflareAccessEnv = Object.assign(
+    Object.create({ APPLE_SESSION_RENEWAL_ENABLED: "false" }),
+    {
+      TEAM_DOMAIN: teamDomain,
+      POLICY_AUD: audience,
+    },
+  );
+  Object.defineProperties(env, {
+    ENCRYPTION_KEYS_JSON: {
+      enumerable: false,
+      get() {
+        assert.equal(this, env);
+        return secret;
+      },
+    },
+    DB: {
+      enumerable: false,
+      get() {
+        assert.equal(this, env);
+        return storage;
+      },
+    },
+  });
+  for (const sub of ["first-user", "second-user"]) {
+    const response = await handle(
+      request("/api/auth/config", await token({ sub })),
+      env,
+      async (_request, runtime) => {
+        const cipher = envelopesFromSecret(runtime.ENCRYPTION_KEYS_JSON);
+        assert.equal(runtime.DB, storage);
+        assert.equal(runtime.APPLE_SESSION_RENEWAL_ENABLED, "false");
+        assert.equal(runtime.REMINDERS_OWNER_ID, sub);
+        const context = {
+          ownerId: sub,
+          accountId: "apple",
+          generation: 1,
+          recordId: "session",
+          schemaVersion: 1 as const,
+        };
+        assert.deepEqual(
+          await cipher.decrypt(
+            await cipher.encrypt({ synthetic: true }, context),
+            context,
+          ),
+          { synthetic: true },
+        );
+        return new Response("ok");
+      },
+    );
+    assert.equal(response.status, 200);
+  }
+  assert.equal(env.REMINDERS_OWNER_ID, undefined);
+  assert.equal(env.APP_ORIGIN, undefined);
 });
 
 test("only the configured owner reaches ordinary routes, and signed JWT claims are checked", async () => {

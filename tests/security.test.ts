@@ -11,6 +11,12 @@ import { applicationRoute } from "../src/api/router.ts";
 import { publicError } from "../src/errors.ts";
 
 test("single Secret chooses the key automatically and preserves existing encrypted records", async () => {
+  assert.throws(
+    () => envelopesFromSecret(undefined),
+    (error: any) =>
+      error.code === "CONFIGURATION_REQUIRED" &&
+      error.message === "The runtime Secret ENCRYPTION_KEYS_JSON is missing.",
+  );
   const secret = b64(crypto.getRandomValues(new Uint8Array(32)));
   const old = new Envelopes("v1", { v1: secret });
   const context = {
