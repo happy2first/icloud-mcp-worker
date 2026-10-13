@@ -23,7 +23,7 @@ const sign = (sub) =>
     .setExpirationTime("5m")
     .sign(privateKey);
 const calls = [];
-const mfEnvKey = JSON.stringify({ v1: randomBytes(32).toString("base64") });
+const mfEnvKey = randomBytes(32).toString("base64");
 const mf = new Miniflare({
   modules: true,
   scriptPath: "dist/worker.js",

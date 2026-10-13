@@ -32,7 +32,12 @@ function aad(context: EnvelopeContext) {
 export class Envelopes {
   readonly active: string;
   readonly keys: Readonly<Record<string, string>>;
-  constructor(active: string, keys: Record<string, string>) {
+  private readonly singleKeyMode: boolean;
+  constructor(
+    active: string,
+    keys: Record<string, string>,
+    singleKeyMode = false,
+  ) {
     function configured(
       condition: unknown,
       message: string,
@@ -72,8 +77,16 @@ export class Envelopes {
     );
     this.active = active;
     this.keys = Object.freeze({ ...keys });
+    configured(
+      !singleKeyMode || entries.length === 1,
+      "Single-key mode requires exactly one key.",
+    );
+    this.singleKeyMode = singleKeyMode;
   }
   async key(keyId: string) {
+    // A raw Secret has one key, independent of the identifier stored by older releases.
+    // AES-GCM still authenticates the ciphertext and the full owner/account context.
+    if (this.singleKeyMode) keyId = this.active;
     if (!Object.hasOwn(this.keys, keyId))
       throw new AppError(
         "CONFIGURATION_REQUIRED",
@@ -142,11 +155,26 @@ export class Envelopes {
   }
 }
 
-// Keep the existing envelope/key names readable, without an active-key setting.
+// Operators paste only Base64. Legacy JSON remains accepted for existing deployments.
 export function envelopesFromSecret(secret?: string): Envelopes {
+  const value = secret?.trim() ?? "";
+  if (!value.startsWith("{")) {
+    try {
+      const bytes = unb64(value, 32);
+      if (bytes.length !== 32 || b64(bytes) !== value)
+        throw new Error("Invalid key");
+      return new Envelopes("v1", { v1: value }, true);
+    } catch {
+      throw new AppError(
+        "CONFIGURATION_REQUIRED",
+        "ENCRYPTION_KEYS_JSON must contain a 32-byte key encoded as Base64, without JSON or quotes.",
+        503,
+      );
+    }
+  }
   let keys: unknown;
   try {
-    keys = JSON.parse(secret ?? "{}");
+    keys = JSON.parse(value);
   } catch {
     throw new AppError(
       "CONFIGURATION_REQUIRED",

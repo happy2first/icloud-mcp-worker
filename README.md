@@ -29,7 +29,7 @@
 - 默认启用 Apple 登录和会话复用，执行有界的 `/validate`、必要时一次 `/accountLogin` Token 恢复。新会话本地永久保留，直到主动断开或确认 Apple 撤销；Apple 仍可能要求重新登录。不会用主密码后台登录。
 - PCS 授权分别记录 `reminders`、`notes3`、`photos`、`iclouddrive`，通过管理按钮申请/继续检查。每次最多两个请求，不在 Worker 内等待轮询。
 - 设备验证后先保存网页会话，再逐项申请 PCS；不以提醒事项 PCS 成功作为保存账户登录的前提。管理页显示等待倒计时，操作中防止重复提交，停用服务同时关闭写权限。
-- AES-256-GCM 使用随机 IV、owner/account/generation/record 绑定的 AAD。密钥环只配置到 Workers Secrets。D1 版本与租约保护网页会话并发更新；DAV 用 ETag/If-Match，创建用稳定 UUID 和 If-None-Match。
+- AES-256-GCM 使用随机 IV、owner/account/generation/record 绑定的 AAD。单一密钥只配置到 Workers Secrets。D1 版本与租约保护网页会话并发更新；DAV 用 ETag/If-Match，创建用稳定 UUID 和 If-None-Match。
 - 服务主机及路径分别白名单验证。资源下载不附带 Apple Cookie/Authorization，Apple 签名 URL 留在加密 D1 中，不在 MCP 结果公开。
 
 ## 部署
@@ -50,14 +50,14 @@ cp wrangler.toml wrangler.local.toml
 | `TEAM_DOMAIN` | 完整 `https://your-team.cloudflareaccess.com` |
 | `POLICY_AUD` | 保护整个 Worker 域名的 Access 应用 Audience |
 
-普通变量只需 TEAM_DOMAIN、POLICY_AUD，可直接在 Cloudflare Dashboard 配置；`keep_vars=true` 保留它们。密钥另存为 Secret `ENCRYPTION_KEYS_JSON`，格式仍为 `{"v1":"32字节Base64密钥"}`，只放一把密钥，无需配置密钥编号。不要更换已有密钥或 JSON 名称，否则已有密文不能解密。登录/恢复默认开启，可分别用 APPLE_LOGIN_ENABLED=false / APPLE_SESSION_RENEWAL_ENABLED=false 暂停；不再使用保留期变量。
+普通变量只需 TEAM_DOMAIN、POLICY_AUD，可直接在 Cloudflare Dashboard 配置；`keep_vars=true` 保留它们。密钥另存为 Secret `ENCRYPTION_KEYS_JSON`，值直接填写 **32 字节随机密钥的标准 Base64 字符串**，不加 JSON、引号或版本号。变量名为兼容已有部署保留。旧 JSON 格式仍能读取；改为纯 Base64 时只提取原来的密钥值，不要换一把密钥，否则已有密文不能解密。登录/恢复默认开启，可分别用 APPLE_LOGIN_ENABLED=false / APPLE_SESSION_RENEWAL_ENABLED=false 暂停；不再使用保留期变量。
 
 密钥在本机生成，通过 Dashboard Secrets 或以下交互命令录入，**不要在聊天发送**：
 
 ```bash
 openssl rand -base64 32
 npx wrangler secret put ENCRYPTION_KEYS_JSON --config wrangler.local.toml
-# 输入 {"v1":"本机生成的32字节base64密钥"}
+# 直接粘贴上一步输出的 Base64 字符串，不加 JSON 或引号
 npx wrangler d1 execute DB --remote --config wrangler.local.toml --file schema.sql
 npx wrangler deploy --config wrangler.local.toml
 ```

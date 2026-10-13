@@ -29,7 +29,7 @@ The web session is shared by Reminders, Notes, Photos, and Drive. Separate PCS s
 
 Verified account credentials are persisted before service PCS requests. Authorize each service from its card after returning from login; Reminders approval failure does not discard a verified account login. Actions are serialized and show persisted PCS cooldowns. Disabling a service clears its write permission. App-specific password paste supports spaces/hyphens or 16 lowercase letters; stored credentials must still pass separate live DAV checks.
 
-Calendar and Contacts use an app-specific password entered in the management page. Both credential classes are AES-256-GCM encrypted in D1 with owner/account/generation/record-bound AAD, random IVs and a Secret-only key ring. Session leases/version fences prevent stale writes; DAV uses ETag/If-Match and deterministic UUID/If-None-Match creation. Service-specific endpoint allowlists reject arbitrary Apple APIs and non-Apple hosts.
+Calendar and Contacts use an app-specific password entered in the management page. Both credential classes are AES-256-GCM encrypted in D1 with owner/account/generation/record-bound AAD, random IVs and one Secret-only key. Session leases/version fences prevent stale writes; DAV uses ETag/If-Match and deterministic UUID/If-None-Match creation. Service-specific endpoint allowlists reject arbitrary Apple APIs and non-Apple hosts.
 
 ## Deploy
 
@@ -49,14 +49,14 @@ Edit the ignored local config: replace the database ID, add a custom-domain rout
 | `TEAM_DOMAIN` | Full `https://your-team.cloudflareaccess.com` |
 | `POLICY_AUD` | Access application audience protecting the entire hostname |
 
-Only TEAM_DOMAIN and POLICY_AUD are required ordinary variables; configure them in the Dashboard (`keep_vars=true`). The runtime Secret ENCRYPTION_KEYS_JSON contains exactly one key, e.g. `{"v1":"32-byte-base64-key"}`. No key identifier variable is needed. Preserve the existing key and JSON name to retain decryptability. APPLE_LOGIN_ENABLED=false and APPLE_SESSION_RENEWAL_ENABLED=false are optional emergency switches; the retention variable is unused.
+Only TEAM_DOMAIN and POLICY_AUD are required ordinary variables; configure them in the Dashboard (`keep_vars=true`). Set the runtime Secret ENCRYPTION_KEYS_JSON to the standard Base64 string of one random 32-byte key, without JSON, quotes or a version label. The variable name and legacy single-key JSON support remain for compatibility. When converting an existing Secret, extract the same key value; do not generate a replacement or existing records will become unreadable. APPLE_LOGIN_ENABLED=false and APPLE_SESSION_RENEWAL_ENABLED=false are optional emergency switches; the retention variable is unused.
 
-Generate a 32-byte key locally and enter the JSON key ring through Workers Secrets. Never send passwords, codes, keys, cookies, or tokens in chat.
+Generate a 32-byte key locally and paste its Base64 output directly into Workers Secrets. Never send passwords, codes, keys, cookies, or tokens in chat.
 
 ```bash
 openssl rand -base64 32
 npx wrangler secret put ENCRYPTION_KEYS_JSON --config wrangler.local.toml
-# Enter {"v1":"your-local-base64-key"}
+# Paste the Base64 output directly, without JSON or quotes
 npx wrangler d1 execute DB --remote --config wrangler.local.toml --file schema.sql
 npx wrangler deploy --config wrangler.local.toml
 ```

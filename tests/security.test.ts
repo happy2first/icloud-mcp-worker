@@ -25,12 +25,36 @@ test("single Secret chooses the key automatically and preserves existing encrypt
   assert.deepEqual(await automatic.decrypt(envelope, context), {
     token: "synthetic",
   });
+  const plain = envelopesFromSecret("\n" + secret + "\n");
+  assert.deepEqual(await plain.decrypt(envelope, context), {
+    token: "synthetic",
+  });
+  const namedLegacy = new Envelopes("old-custom-name", {
+    "old-custom-name": secret,
+  });
+  assert.deepEqual(
+    await plain.decrypt(
+      await namedLegacy.encrypt({ token: "legacy" }, context),
+      context,
+    ),
+    { token: "legacy" },
+  );
+  const fresh = await plain.encrypt({ token: "new" }, context);
+  assert.deepEqual(await envelopesFromSecret(secret).decrypt(fresh, context), {
+    token: "new",
+  });
+  await assert.rejects(plain.decrypt(fresh, { ...context, ownerId: "second" }));
   await assert.rejects(
     automatic.decrypt(envelope, { ...context, ownerId: "second" }),
   );
   for (const invalid of [
     undefined,
     "invalid",
+    "",
+    JSON.stringify(secret),
+    b64(crypto.getRandomValues(new Uint8Array(31))),
+    b64(crypto.getRandomValues(new Uint8Array(33))),
+    secret.replace("=", ""),
     "{}",
     "null",
     "[]",

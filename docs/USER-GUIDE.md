@@ -29,12 +29,12 @@ routes = [{ pattern = "icloud.mcp.example.com", custom_domain = true }]
 
 Apple 登录和会话恢复默认开启，新网页会话永久保留，无本地 30 天限制。上述四项 Apple/密钥编号变量无需填写；ENCRYPTION_KEY_ID 和保留期变量已不使用。可选地设置 APPLE_LOGIN_ENABLED=false / APPLE_SESSION_RENEWAL_ENABLED=false 暂停对应功能。
 
-用本机生成 32 字节随机 AES 密钥，并将包含唯一一把密钥的 JSON 放入 **Workers Secret**：
+用本机生成 32 字节随机 AES 密钥，将输出的 Base64 字符串直接放入 **Workers Secret** `ENCRYPTION_KEYS_JSON`，不加 JSON、引号或版本号。名称保留只是为了兼容已有部署：
 
 ```bash
 openssl rand -base64 32
 npx wrangler secret put ENCRYPTION_KEYS_JSON --config wrangler.local.toml
-# 在交互输入中填写 {"v1":"刚生成的base64值"}
+# 在交互输入中直接粘贴刚生成的 Base64 字符串
 npx wrangler d1 execute DB --remote --file schema.sql --config wrangler.local.toml
 npx wrangler deploy --config wrangler.local.toml
 ```
@@ -53,7 +53,7 @@ npx wrangler deploy --config wrangler.local.toml
 2. 构建 API Token 必须具有对应账户的 Workers Scripts 编辑权限、D1 读取/编辑权限；自定义域名还需要对应域名/路由的部署权限。如自动配置报权限错误，在 Cloudflare 构建的 API Token 设置中补齐，或先手动创建 D1、把真实 ID 填入仓库配置。数据库 ID 不是密码，但不要虚构它。
 3. 若已有数据库名就是 `icloud-mcp-worker`，保持现有名称，Wrangler 会复用；若名称不同，先把 `database_name` 和真实 `database_id` 改成同一个现有数据库的信息。不要另建数据库代替已有存储，也不要删除已有数据库。没有任何数据库时才允许首次自动创建。
 4. 在 Worker 的域名设置中添加自己的自定义域名，或在仓库 `wrangler.toml` 顶层添加 custom_domain 路由。在 Dashboard 添加 TEAM_DOMAIN、POLICY_AUD 即可；不要只修改本地忽略文件，也不要在 Git 配置里重复写同名旧值覆盖 Dashboard 设置。
-5. 在 Worker 的“变量和机密”中把 `ENCRYPTION_KEYS_JSON` 添加为 **Secret**，使用上节生成的密钥 JSON。这是运行时机密，不应添加到 Git 文件或构建日志。已有密钥须保留，替换会使已有加密凭证无法解密。
+5. 在 Worker 的“变量和机密”中把 `ENCRYPTION_KEYS_JSON` 添加为 **Secret**，值直接填写上节生成的 Base64 字符串，不加 JSON 或引号。这是运行时机密，不应添加到 Git 文件或构建日志。旧 JSON 格式仍可使用；如改为纯 Base64，只提取同一密钥值，不能重新生成替换，否则已有加密凭证无法解密。
 6. 点击部署最新提交。日志须同时显示 Worker 部署成功和远程 schema 执行成功。SQL 仅使用 `CREATE TABLE IF NOT EXISTS`，重复执行不会清空已有数据；它是当前初始结构，未来结构变更仍需独立迁移。
 
 若仍使用 `npx wrangler deploy`，它只部署 Worker、不建表；首次部署后需在有 Cloudflare 授权的终端执行 `npx wrangler d1 execute DB --remote --file schema.sql --yes`，或把仓库 `schema.sql` 的完整内容在该 D1 的控制台执行。D1 建表不证明 Apple 凭证有效，部署成功后仍需继续完成下面的配置及真实服务检查。
