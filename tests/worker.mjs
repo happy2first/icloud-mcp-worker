@@ -54,6 +54,28 @@ const mf = new Miniflare({
       return new Response("synthetic-file", {
         headers: { "content-type": "text/plain" },
       });
+    if (u.hostname === "p12-fmipweb.icloud.com") {
+      const payload = JSON.parse(calls.at(-1).body);
+      assert.equal(payload.clientContext.fmly, true);
+      return Response.json({
+        serverContext: { prsId: "123" },
+        userInfo: { hasMembers: false },
+        content: [
+          {
+            id: "synthetic-phone",
+            name: "Synthetic phone",
+            features: { LOC: true, SND: true },
+            deviceStatus: "200",
+            location: {
+              latitude: 22,
+              longitude: 113,
+              timeStamp: 1000,
+              isOld: true,
+            },
+          },
+        ],
+      });
+    }
     throw new Error("Unexpected outbound request (network disabled).");
   },
   log: new Log(LogLevel.ERROR),
@@ -201,6 +223,23 @@ try {
     );
   }
   assert.ok(tools.result.tools.length >= 25);
+  for (const name of [
+    "findmy_list_devices",
+    "findmy_get_location",
+    "findmy_play_sound",
+  ])
+    assert.ok(tools.result.tools.some((t) => t.name === name));
+  assert.equal(
+    tools.result.tools.find((t) => t.name === "findmy_play_sound").annotations
+      .idempotentHint,
+    false,
+  );
+  const unconfirmed = await mcp("tools/call", {
+    name: "findmy_play_sound",
+    arguments: { deviceId: "synthetic-phone" },
+  });
+  assert.ok(unconfirmed.error || unconfirmed.result?.isError);
+  assert.equal(calls.length, 0);
   assert.ok(
     tools.result.tools.every(
       (t) =>
@@ -325,6 +364,7 @@ try {
       login: loginAssurance(),
       auth: { clientId: "synthetic-client", headers: {}, cookies: [] },
       connection: {
+        services: { fmip: "https://p12-fmipweb.icloud.com" },
         dsid: "123",
         clientId: "synthetic-client",
         clientBuildNumber: "test",
@@ -332,11 +372,37 @@ try {
         cloudKitURL:
           "https://p01-ckdatabasews.icloud.com/database/1/com.apple.reminders/production/private",
       },
+      renewal: {
+        lastValidatedAt: Date.now(),
+        lastAppleSuccessAt: Date.now(),
+        lastRenewedAt: null,
+        nextRetryAt: null,
+        failures: 0,
+        requiredAction: null,
+        lastErrorCode: null,
+      },
       pcs: freshPcsCheckpoint(),
     },
     "DEVICE_APPROVAL_PENDING",
     "approve-device-consent",
   );
+  const fmipListed = await mcp("tools/call", {
+    name: "findmy_list_devices",
+    arguments: {},
+  });
+  assert.equal(
+    fmipListed.result.structuredContent.devices[0].id,
+    "synthetic-phone",
+    JSON.stringify(fmipListed),
+  );
+  const fmipLocation = await mcp("tools/call", {
+    name: "findmy_get_location",
+    arguments: { deviceId: "synthetic-phone", refresh: false },
+  });
+  assert.equal(fmipLocation.result.structuredContent.location.isOld, true);
+  assert.equal(fmipLocation.result.structuredContent.refreshAccepted, false);
+  // Never send a synthetic or real sound during integration verification.
+  assert.ok(!calls.some((c) => c.url.endsWith("playSound")));
   const independentStatus = await (await request("/api/admin/status")).json();
   assert.equal(independentStatus.webSessionAvailable, true);
   assert.equal(
@@ -441,6 +507,7 @@ try {
         "management CSP and browser SRP bundle",
         "D1 encrypted credential storage and version conflicts",
         "six service gates",
+        "Find My MCP discovery, explicit confirmation rejection and saved-session read through workerd",
         "MCP discovery without destructive/auth tools",
         "DAV conditional write with permission gates",
         "owner/service/session-scoped encrypted downloads and MCP resources",

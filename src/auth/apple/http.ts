@@ -499,10 +499,10 @@ export class AppleAuthHTTP {
   }
   private services(body: Record<string, unknown> | null) {
     const services: Partial<
-      Record<"ckdatabasews" | "drivews" | "docws", string>
+      Record<"ckdatabasews" | "drivews" | "docws" | "fmip", string>
     > = {};
     const ws = object(body?.webservices);
-    for (const key of ["ckdatabasews", "drivews", "docws"] as const) {
+    for (const key of ["ckdatabasews", "drivews", "docws", "fmip"] as const) {
       const value = object(ws?.[key])?.url;
       if (typeof value === "string") {
         try {
@@ -515,7 +515,9 @@ export class AppleAuthHTTP {
               ? /^p\d{1,3}-ckdatabasews\.icloud\.com$/
               : key === "drivews"
                 ? /^p\d{1,3}-drivews\.icloud\.com$/
-                : /^p\d{1,3}-docws\.icloud\.com$/;
+                : key === "docws"
+                  ? /^p\d{1,3}-docws\.icloud\.com$/
+                  : /^(?:p\d{1,3}-)?fmipweb\.icloud\.com(?:\.cn)?$/;
           if (
             url.protocol !== "https:" ||
             url.username ||

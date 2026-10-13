@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-一个 Cloudflare Worker、TypeScript、D1、Cloudflare Access + Managed OAuth。让 MCP 客户端访问 Apple 日历、通讯录、提醒事项、备忘录、照片及 iCloud 云盘；不依赖 Mac、VPS、R2 或浏览器扩展。
+一个 Cloudflare Worker、TypeScript、D1、Cloudflare Access + Managed OAuth。让 MCP 客户端访问 Apple 日历、通讯录、提醒事项、备忘录、照片、iCloud 云盘及 Apple 查找；不依赖 Mac、VPS、R2 或浏览器扩展。
 
 **这是基于 Apple 非官方网页协议的初始实现，尚未用真实 Apple 账户或 Cloudflare 生产环境验收。不要将自动化测试通过理解成六项服务已经在线可用。**
 
@@ -15,6 +15,7 @@
 | 提醒事项 | 列表、分页查询、单项查询、创建、修改、完成、重新打开；内部软删除 | 复用 Xzese 的 CloudKit/CRDT、版本标签和确定性创建 ID；共享列表、复杂重复/子任务写入不支持 |
 | 备忘录 | 文件夹分页、最近列表、标题/摘要搜索、正文 Protobuf 解码 | 只读；搜索范围为当前页标题/摘要，须继续分页；不支持全文搜索、锁定笔记和附件/复杂表格渲染 |
 | 照片 | 个人图库相册分页、照片索引查询、元数据、缩略图、指定照片下载 | 只读；CPLAsset/CPLMaster 配对；共享图库及旧共享相册不支持；不做全量同步 |
+| 查找 | 本人及家庭共享设备列表、按需定位、明确确认后播放声音 | 复用 Apple Web 会话；不支持朋友位置、AirTag、丢失模式或抹除 |
 | 云盘 | DriveWS 目录浏览/目录内搜索、DocWS 下载 | 只读；不支持递归搜索、共享所有者命名空间、上传或备份 |
 
 **MCP 不注册任何删除、凭证录入、登录或 PCS 授权工具。** 六项服务默认关闭；写入权限默认关闭，需在 `/admin` 分别开启。
@@ -100,3 +101,24 @@ npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 ```
 
 当前验收结果见 [验收记录](docs/VALIDATION.md)。真实 Apple 和生产 Cloudflare 验收尚未通过。对中国区 `.icloud.com.cn` 服务、地域/风控差异、Apple 私有协议变化及真实设备 2FA/WebSocket 兼容性，当前均没有实测证据。现有白名单只支持 `.icloud.com`，发现其他地域服务会明确拒绝，不应直接扩大到任意域名。
+
+
+## Apple 查找（Find My）
+
+新增工具使用当前 Access 用户已保存的 **Apple Web 会话**，无需新增环境变量、数据库或管理页面，不依赖提醒事项 PCS 授权。六项原有服务的开关不影响 Find My；Find My 随 Apple 登录启用，`APPLE_LOGIN_ENABLED=false` 可暂停。`icloud_status.findmy` 报告本地会话是否可用，不代表已验证 Apple 接口。旧会话尚未保存 `fmip` 服务地址时，首次调用尝试一次现有会话验证；若 Apple 未返回支持的地址则明确报错，不猜测地址。
+
+| 工具 | 用法 |
+|---|---|
+| `findmy_list_devices` | 无参数；列出本人及可访问家庭设备，返回名称、类型、所属成员、在线状态、电量及家庭加载情况 |
+| `findmy_get_location` | `{ "deviceId": "列表返回的ID", "refresh": true }`；默认按需请求定位，`false` 仅读取最后报告位置 |
+| `findmy_play_sound` | 用户明确确认对**指定设备**响铃后，传 `{ "deviceId": "设备ID", "confirmed": true }`；不得自动重试 |
+
+家庭成员必须已加入同一家庭共享，并在 Apple「查找」及家庭共享设置中允许当前账户访问相应设备/位置。家庭共享不保证每台设备可定位；关闭定位、设备离线和 Apple 服务限制都可能影响结果。`fmly=true` 始终启用；`membersInfo.deviceFetchStatus` 为 `LOADING` 时进行有限刷新，连续无进展即停止。结果按设备 ID 合并，`familyComplete=false` 表示家庭设备尚未完整加载或状态未知，请稍后重查。不会把 `LOADING` 单独判定为无权限。
+
+定位返回坐标、精度（米）、毫秒时间戳、ISO 时间、`isOld` 和位置年龄；未知值为 `null`。`refreshAccepted=true` 仅表示刷新请求被接受；只有定位时间晚于基线且不早于本次请求、同时 Apple 标记 `isOld=false`，才返回 `newLocationObtained=true`。`LOCATION_TIMEOUT` 表示本次有限等待未取得可证实的新定位，可能仍返回历史位置；`DEVICE_OFFLINE`、`NO_LOCATION_PERMISSION`、`LOCATION_UNAVAILABLE` 分别说明离线、明确禁止定位及无法取得位置。`refresh=false` 不发送 `shouldLocate`。
+
+播放声音返回请求接受状态，不声称实际声音已播放；离线时可能延后。网络异常返回 `WRITE_OUTCOME_UNKNOWN`，应检查设备并重新取得用户确认，不自动重发。会话过期沿用既有受控续期和重新登录机制，可能返回 `REAUTH_REQUIRED`、`VERIFICATION_REQUIRED`；没有降级到不可信会话或绕过 2FA。缺少服务、权限拒绝、协议变化和限流均返回明确错误。
+
+暂不支持朋友位置、AirTag、丢失模式或抹除。请求内处理 serverContext，不保存位置，不常驻轮询。Apple 非公开协议可能变化。
+
+**验收：新增模拟测试、现有回归测试及本地 workerd 的 Access → MCP → 加密会话 → 模拟 Apple HTTP 链路已通过；尚未用真实 Apple 账户验证，也未触发真实设备响铃。** 上游依据和详细记录见 [Find My 验证记录](docs/FINDMY-VALIDATION.md)。部署后先调用设备列表，再用返回 ID 查询位置；响铃须另行明确确认。

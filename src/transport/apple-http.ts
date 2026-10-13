@@ -36,10 +36,14 @@ export function validatedAppleURL(value: string, discovered = false): URL {
   );
   const service =
     discovered &&
-    ((/^p\d{1,3}-ckdatabasews\.icloud\.com$/.test(url.hostname) &&
-      /^\/database\/1\/(?:com\.apple\.notes|com\.apple\.photos\.cloud)\/production\/private\/(?:records\/(?:query|lookup)|zones\/list|changes\/zone)$/.test(
+    ((/^(?:p\d{1,3}-)?fmipweb\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
+      /^\/fmipservice\/client\/web\/(?:initClient|refreshClient|playSound)$/.test(
         url.pathname,
       )) ||
+      (/^p\d{1,3}-ckdatabasews\.icloud\.com$/.test(url.hostname) &&
+        /^\/database\/1\/(?:com\.apple\.notes|com\.apple\.photos\.cloud)\/production\/private\/(?:records\/(?:query|lookup)|zones\/list|changes\/zone)$/.test(
+          url.pathname,
+        )) ||
       (/^p\d{1,3}-drivews\.icloud\.com$/.test(url.hostname) &&
         url.pathname === "/retrieveItemDetailsInFolders") ||
       (/^p\d{1,3}-docws\.icloud\.com$/.test(url.hostname) &&

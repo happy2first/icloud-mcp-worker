@@ -97,3 +97,24 @@ npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 ```
 
 See [validation evidence](docs/VALIDATION.md). Real Apple and production Cloudflare verification are pending. China-region `.icloud.com.cn` endpoints, account-specific risk controls and real-device WebSocket authentication have not been tested; the current allowlists support `.icloud.com` only and reject unrecognized regional services.
+
+
+## Apple Find My
+
+Three new MCP tools reuse the current Access owner's encrypted **Apple Web session**, session renewal, and HTTP transport. No new environment variables, database, service, or management page. Find My does not require Reminders PCS approval or the existing six service switches: it follows Apple login availability (`APPLE_LOGIN_ENABLED=false` disables it). `icloud_status.findmy` reports local session availability, not live Apple validation. Older sessions missing the `fmip` root receive one existing session-validation attempt; unsupported/missing roots fail explicitly rather than being guessed.
+
+| Tool | Usage |
+|---|---|
+| `findmy_list_devices` | No arguments. Lists accessible own and Family Sharing devices with name, type, owner, online state, battery and family-loading metadata. |
+| `findmy_get_location` | `{ "deviceId": "ID from listing", "refresh": true }`. Default requests a fix; `false` reads last-reported data without `shouldLocate`. |
+| `findmy_play_sound` | After explicit user confirmation for the **specific device**, send `{ "deviceId": "ID", "confirmed": true }`. Never automatically retry. |
+
+Members must belong to the same Apple Family Sharing group and permit the current account to access the relevant devices/locations through Apple's Find My and sharing settings. Family membership alone does not guarantee location access. Requests always set `fmly=true`. `membersInfo.deviceFetchStatus=LOADING` triggers bounded refreshes, stopping when no progress occurs; device IDs are merged without duplicates. `familyComplete=false` means incomplete/unknown family availability. LOADING alone is not evidence of permission denial.
+
+Locations include coordinates, accuracy in metres, millisecond timestamp, ISO time, `isOld`, and age; unknown values are null. `refreshAccepted` means only that Apple accepted a refresh. `newLocationObtained` requires a timestamp newer than the baseline and at least the request start, plus Apple's `isOld=false`. `LOCATION_TIMEOUT` can include historical data and does not claim a new fix. `DEVICE_OFFLINE`, `NO_LOCATION_PERMISSION`, and `LOCATION_UNAVAILABLE` describe offline devices, explicit denial, and unavailable locations respectively.
+
+Sound acceptance does not prove playback; offline devices may play later. Ambiguous failures return `WRITE_OUTCOME_UNKNOWN`: check the device and obtain fresh confirmation before another attempt. Existing bounded session recovery and 2FA are retained; no untrusted-session downgrade or authentication bypass. Missing services, auth challenges, permission denial, protocol changes and rate limits produce actionable errors.
+
+Friends' shared locations, AirTags, lost mode and erase are unsupported. Context and locations exist only within the request, with no location persistence or background polling. Apple's private protocol may change.
+
+**Validation: synthetic tests, existing regressions, and the local workerd Access → MCP → encrypted session → mocked Apple HTTP flow pass. No real Apple account or production deployment has been verified, and no real device sound has been triggered.** See [Find My validation](docs/FINDMY-VALIDATION.md). After deploying, list devices and query a returned ID first; playing sound requires separate explicit confirmation.

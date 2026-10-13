@@ -216,3 +216,24 @@ test("rollout gates are independent, consent text follows server policy and inte
       code("CONFIGURATION_REQUIRED"),
     );
 });
+
+test("Find My discovery preserves valid roots and rejects hostile optional roots", async () => {
+  for (const root of [
+    "https://p12-fmipweb.icloud.com",
+    "https://fmipweb.icloud.com.cn",
+    "https://evil.invalid",
+    "https://p12-fmipweb.icloud.com/lostDevice",
+  ]) {
+    const http = AppleAuthHTTP.restore(snapshot(), async () =>
+      Response.json({
+        ...accepted(),
+        webservices: { ...accepted().webservices, fmip: { url: root } },
+      }),
+    );
+    const c = await http.validateSession("123456789");
+    assert.equal(
+      c.services?.fmip,
+      root.includes("evil") || root.includes("lostDevice") ? undefined : root,
+    );
+  }
+});

@@ -69,6 +69,13 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
                 : null,
       realAppleValidated: false,
     })),
+    findmy: {
+      credentialAvailable: webSessionAvailable,
+      authentication: "existing-apple-web-session",
+      familySharing: true,
+      soundRequiresConfirmation: true,
+      realAppleValidated: false,
+    },
     productionValidated: false,
   };
 }

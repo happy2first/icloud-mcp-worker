@@ -18,9 +18,10 @@ export type PcsService = "notes3" | "photos" | "iclouddrive";
 export async function webOperation<T>(
   env: RuntimeEnv,
   owner: string,
-  service: PcsService,
+  service: PcsService | "fmip",
   run: (client: WebClient) => Promise<T>,
   approve = false,
+  replaySafe = true,
 ) {
   requireAppleEnabled(env);
   const repo = new AppleSessionRepository(env, owner);
@@ -28,7 +29,13 @@ export async function webOperation<T>(
   const renewal = new AppleSessionRenewal(env, repo);
   const budget = appleRequestBudget();
   for (let attempt = 0; attempt < 2; attempt++) {
-    const saved = await renewal.ensure(initial.fence.generation, budget);
+    const saved = await renewal.ensure(
+      initial.fence.generation,
+      budget,
+      service === "fmip" &&
+        !initial.session.connection.services?.fmip &&
+        attempt === 0,
+    );
     if (budget.deadline <= Date.now())
       throw new AppError(
         "UPSTREAM_UNAVAILABLE",
@@ -47,8 +54,9 @@ export async function webOperation<T>(
     );
     let session = saved.session;
     try {
-      const state = session.servicePcs?.[service];
-      if (approve) {
+      const state =
+        service === "fmip" ? undefined : session.servicePcs?.[service];
+      if (approve && service !== "fmip") {
         const checkpoint =
           state && state.expiresAt > Date.now() ? state : freshPcsCheckpoint();
         const result = await advancePcs(
@@ -80,7 +88,7 @@ export async function webOperation<T>(
           nextAttemptAt: result.checkpoint.nextAttemptAt,
         } as T;
       }
-      if (!state?.ready)
+      if (service !== "fmip" && !state?.ready)
         throw new AppError(
           "DEVICE_APPROVAL_PENDING",
           `Open /admin and authorize ${service} PCS access.`,
@@ -100,9 +108,12 @@ export async function webOperation<T>(
       if (
         e instanceof AppError &&
         e.code === "REAUTH_REQUIRED" &&
+        replaySafe &&
         attempt === 0 &&
         !budget.recoveryUsed &&
-        env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1"
+        (service === "fmip"
+          ? env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
+          : env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1")
       ) {
         await repo.releaseResume(fence);
         await renewal.ensure(initial.fence.generation, budget, true);
@@ -117,7 +128,9 @@ export async function webOperation<T>(
       if (
         e instanceof AppError &&
         e.code === "REAUTH_REQUIRED" &&
-        env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1"
+        (service === "fmip"
+          ? env.APPLE_SESSION_RENEWAL_ENABLED !== "false"
+          : env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1")
       ) {
         const metadata = session.renewal ?? renewalCheckpoint();
         const failures = Math.min(8, metadata.failures + 1);
@@ -142,6 +155,7 @@ export async function webOperation<T>(
       if (
         e instanceof AppError &&
         e.code === "DEVICE_APPROVAL_PENDING" &&
+        service !== "fmip" &&
         session.servicePcs?.[service]?.ready
       ) {
         session = {
@@ -176,7 +190,7 @@ export class WebClient {
     readonly session: AppleSession,
     readonly generation: number = 0,
   ) {}
-  root(service: "ckdatabasews" | "drivews" | "docws") {
+  root(service: "ckdatabasews" | "drivews" | "docws" | "fmip") {
     const value =
       this.session.connection.services?.[service] ??
       (service === "ckdatabasews"
@@ -202,7 +216,7 @@ export class WebClient {
     });
   }
   async request(
-    service: "ckdatabasews" | "drivews" | "docws",
+    service: "ckdatabasews" | "drivews" | "docws" | "fmip",
     path: string,
     payload?: unknown,
   ) {
@@ -248,6 +262,26 @@ export class WebClient {
         "PROTOCOL_CHANGED",
         "Apple returned an unsupported response.",
       );
+    }
+    if (service === "fmip") {
+      const status = String(body?.statusCode ?? "");
+      if (["401", "421", "450"].includes(status))
+        throw new AppError(
+          "REAUTH_REQUIRED",
+          "Find My rejected the Apple session. Reconnect in /admin if bounded recovery cannot renew it.",
+          409,
+        );
+      if (status === "403")
+        throw new AppError(
+          "FORBIDDEN",
+          "Find My denied this account or device access. Check Family Sharing and Find My permissions.",
+          403,
+        );
+      if (status && !["200", "203"].includes(status))
+        throw new AppError(
+          "PROTOCOL_CHANGED",
+          "Find My returned an unsupported status. Check project updates.",
+        );
     }
     const code = String(body?.serverErrorCode ?? "");
     if (

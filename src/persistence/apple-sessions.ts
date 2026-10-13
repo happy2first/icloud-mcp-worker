@@ -82,6 +82,7 @@ const CloudKitConnectionSchema = z
         ckdatabasews: z.string().url().optional(),
         drivews: z.string().url().optional(),
         docws: z.string().url().optional(),
+        fmip: z.string().url().optional(),
       })
       .strict()
       .optional(),

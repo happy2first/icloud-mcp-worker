@@ -14,6 +14,7 @@ import {
   updateDavData,
 } from "../services/dav.ts";
 import { webOperation } from "../services/web.ts";
+import { findMyOperation } from "../services/findmy.ts";
 import { NotesClient } from "../services/notes.ts";
 import { PhotosClient } from "../services/photos.ts";
 import { DriveClient, ROOT } from "../services/drive.ts";
@@ -105,7 +106,7 @@ export function registerServices(
         annotations: {
           readOnlyHint: !write,
           destructiveHint: write,
-          idempotentHint: true,
+          idempotentHint: name !== "findmy_play_sound",
           openWorldHint: true,
         },
       },
@@ -124,6 +125,46 @@ export function registerServices(
         }
       },
     );
+  register(
+    "findmy_list_devices",
+    null,
+    z.object({}).strict(),
+    false,
+    () => findMyOperation(env, owner, (c) => c.list()),
+    "List devices accessible to the current Apple account, including Family Sharing (fmly=true). Bounded loading may return partial family results; inspect members and familyComplete. Does not actively locate devices. No friends, AirTags, lost mode or erase.",
+  );
+  register(
+    "findmy_get_location",
+    null,
+    z.object({ deviceId: id, refresh: z.boolean().default(true) }).strict(),
+    false,
+    (a) =>
+      findMyOperation(env, owner, (c) => c.getLocation(a.deviceId, a.refresh)),
+    "Read or request a location for an exact ID from findmy_list_devices. refresh=false returns last reported data. refreshAccepted only means Apple accepted the request; newLocationObtained requires a newer timestamp after this request and isOld=false. Offline/timeouts can return historical positions; inspect status and timestamp. No continuous monitoring.",
+  );
+  register(
+    "findmy_play_sound",
+    null,
+    z
+      .object({
+        deviceId: id,
+        confirmed: z
+          .literal(true)
+          .describe(
+            "Set true only after the user explicitly confirms playing sound on this particular device.",
+          ),
+      })
+      .strict(),
+    true,
+    (a) =>
+      findMyOperation(
+        env,
+        owner,
+        (c) => c.playSound(a.deviceId, a.confirmed),
+        false,
+      ),
+    "Active operation: play sound on a specific accessible device. MUST obtain explicit user confirmation naming this device before calling; general lookup permission is insufficient. Never automatically retry. Apple accepting the request does not prove actual playback, especially offline.",
+  );
   register(
     "icloud_status",
     null,

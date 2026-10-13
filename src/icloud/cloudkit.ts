@@ -57,7 +57,9 @@ function requireValue(condition: unknown, message: string): asserts condition {
 }
 
 export interface CloudKitConnection {
-  services?: Partial<Record<"ckdatabasews" | "drivews" | "docws", string>>;
+  services?: Partial<
+    Record<"ckdatabasews" | "drivews" | "docws" | "fmip", string>
+  >;
   dsid: string;
   clientId: string;
   clientBuildNumber: string;
