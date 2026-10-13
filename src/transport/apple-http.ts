@@ -141,6 +141,7 @@ export class AppleHTTP {
       discovered?: boolean;
       signal?: AbortSignal;
       followRedirects?: boolean;
+      allowAccountLogin302Body?: boolean;
       maxRedirects?: number;
       stage?: RequestStage;
     } = {},
@@ -225,7 +226,16 @@ export class AppleHTTP {
         }
         if (
           options.followRedirects !== false &&
-          redirectStatuses.includes(response.status)
+          redirectStatuses.includes(response.status) &&
+          !(
+            options.allowAccountLogin302Body === true &&
+            options.stage === "account-login" &&
+            url.hostname === "setup.icloud.com" &&
+            url.pathname === "/setup/ws/1/accountLogin" &&
+            method === "POST" &&
+            response.status === 302 &&
+            !response.headers.get("location")
+          )
         ) {
           lastRedirectStatus = response.status;
           const location = response.headers.get("location");

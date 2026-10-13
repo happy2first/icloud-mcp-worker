@@ -256,6 +256,10 @@ export class AppleAuthHTTP {
       method,
       headers,
       signal: this.signal,
+      // requests (pyicloud) returns a Location-less 302 to the caller; its
+      // accountLogin parser then validates the JSON account/trust result.
+      allowAccountLogin302Body:
+        new URL(url).pathname === "/setup/ws/1/accountLogin",
       maxRedirects: method === "GET" ? 8 : 3,
       stage: new URL(url).pathname.endsWith("/2sv/trust")
         ? "browser-trust"
@@ -321,6 +325,15 @@ export class AppleAuthHTTP {
       text,
       retryAfterMs,
     };
+    if (
+      new URL(url).pathname === "/setup/ws/1/accountLogin" &&
+      response.status === 302 &&
+      !reply.body
+    )
+      throw new AppError(
+        "PROTOCOL_CHANGED",
+        "Apple account-login: HTTP 302 without Location did not contain a JSON account result. No session was saved.",
+      );
     if (response.status === 429 || (response.status >= 500 && delay))
       throw new AppleRetryError(retryAfterMs);
     const errors = reply.body?.serviceErrors;
@@ -394,7 +407,7 @@ export class AppleAuthHTTP {
         "Apple denied this account setup request. Resolve access through Apple's official interface.",
         403,
       );
-    this.expect(reply, [200]);
+    this.expect(reply, exchange ? [200, 302] : [200]);
     if (!body)
       throw new AppError(
         "PROTOCOL_CHANGED",
@@ -559,7 +572,7 @@ export class AppleAuthHTTP {
     });
     if (expectedAccount !== undefined)
       return this.acceptedAccount(reply, expectedAccount);
-    this.expect(reply, [200]);
+    this.expect(reply, [200, 302]);
     const body = reply.body;
     if (body?.termsUpdateNeeded === true)
       throw new AppError(

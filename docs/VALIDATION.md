@@ -1,5 +1,8 @@
 # Validation evidence / 验收记录
 
+
+Account-login 302 compatibility (2026-10-13): operator reported account-login HTTP 302 without Location. Pinned pyicloud parses the returned JSON after requests.raise_for_status(), which does not reject this status. Worker now reads this response only for POST setup.icloud.com/setup/ws/1/accountLogin; actual redirects with Location retain the existing bounded rules. A 302 alone is never authentication evidence: account trust, rejection/terms flags, dsid and allowlisted services must pass the existing account checks before persistence. Empty/non-JSON, untrusted, challenge-required, terms-required and incomplete/invalid service responses are covered by simulated tests and cannot save a session. The operator's actual response body and successful live Apple login remain unverified.
+
 Initial development date: 2026-10-12.
 
 Apple redirect review (2026-10-13): compared current Xzese transport and pyicloud trust_session source. Xzese's generic three-redirect cap was reused unchanged; pyicloud requests browser trust before token authentication. Authentication GET requests now allow up to eight same-origin redirects within the unchanged timeout, while other requests retain three. Intermediate allowlisted session headers are preserved, refreshed authentication context is used on follow-up hops, and missing Location, excessive hops and identical-request loops report APPLE_REDIRECT_ERROR with stage/status/count only. New tests complete trusted-device login with four trust redirects and verify intermediate cookies/tokens; missing destinations cannot persist a login, and loop diagnostics expose no query/header secrets. The operator's actual redirect response and Apple login completion remain unverified.

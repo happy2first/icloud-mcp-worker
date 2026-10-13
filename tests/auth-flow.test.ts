@@ -638,6 +638,53 @@ test("verified device login survives four browser-trust redirects and preserves 
   assert.equal(h.saved()!.session.auth.headers.scnt, "redirect-scnt");
 });
 
+test("accountLogin accepts a Location-less 302 only with a complete trusted account result", async () => {
+  const h = bridgeHarness({ account: { status: 302, body: accountReply } });
+  await bridgeUntilValidation(h.flow);
+  const done = await h.flow.advance({
+    type: "bridge-validation",
+    ...binding,
+    sequence: 4,
+    code: fixtures.bridge.plaintext,
+  });
+  assert.equal(done.type, "complete");
+  assert.ok(h.saved());
+  assert.equal(
+    h.requests.filter((r) => r.path.endsWith("/accountLogin")).length,
+    1,
+  );
+});
+
+test("Location-less accountLogin 302 cannot save empty, untrusted or incomplete responses", async () => {
+  for (const account of [
+    { status: 302 },
+    { status: 302, text: "<html>Redirecting</html>" },
+    { status: 302, body: { ...accountReply, hsaTrustedBrowser: false } },
+    { status: 302, body: { ...accountReply, hsaChallengeRequired: true } },
+    { status: 302, body: { ...accountReply, termsUpdateNeeded: true } },
+    { status: 302, body: { hsaTrustedBrowser: true } },
+    {
+      status: 302,
+      body: {
+        ...accountReply,
+        webservices: { ckdatabasews: { url: "https://untrusted.invalid" } },
+      },
+    },
+  ]) {
+    const h = bridgeHarness({ account });
+    await bridgeUntilValidation(h.flow);
+    await assert.rejects(
+      h.flow.advance({
+        type: "bridge-validation",
+        ...binding,
+        sequence: 4,
+        code: fixtures.bridge.plaintext,
+      }),
+    );
+    assert.equal(h.saved(), null);
+  }
+});
+
 test("missing browser-trust redirect destination never saves a verified-device session as logged in", async () => {
   const h = bridgeHarness({ trust: [{ status: 302 }] });
   await bridgeUntilValidation(h.flow);
