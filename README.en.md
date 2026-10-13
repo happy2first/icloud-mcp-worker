@@ -33,7 +33,7 @@ Calendar and Contacts use an app-specific password entered in the management pag
 
 ## Deploy
 
-The checked-in D1 ID is a placeholder. No production infrastructure exists in this checkout.
+Production deployment remains unverified. For Git-connected Cloudflare Workers Builds, use `npm run build` as the build command and `npm run deploy:cloud` as the deploy command. Wrangler reuses or provisions the named D1 database; the deploy script then applies the non-destructive initial schema. The tracked configuration no longer contains a placeholder database ID. The ignored local configuration below is not available to cloud builds. Configure your custom hostname and Access variables in the tracked configuration, and store `ENCRYPTION_KEYS_JSON` as a runtime Worker Secret. The build token needs Worker deployment and D1 read/write permissions. See the [cloud deployment checklist](docs/USER-GUIDE.md#11-cloudflare-workers-builds从-github-部署).
 
 ```bash
 npm ci
