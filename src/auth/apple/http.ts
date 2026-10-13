@@ -366,6 +366,19 @@ export class AppleAuthHTTP {
         `Apple ${stage}: HTTP ${reply.status}; authentication rejected.`,
         409,
       );
+    if (
+      reply.status === 412 &&
+      /^(requestPCS|requestWebAccessState|enableDeviceConsentForPCS)/.test(
+        stage,
+      ) &&
+      reply.body?.hsaChallengeRequired !== true &&
+      reply.body?.hsaTrustedBrowser !== false
+    )
+      throw new AppError(
+        "PROTOCOL_CHANGED",
+        `Apple ${stage} (${this.region}): HTTP 412; hsaChallengeRequired=${safeFlag(reply.body?.hsaChallengeRequired)}; hsaTrustedBrowser=${safeFlag(reply.body?.hsaTrustedBrowser)}. Data-access precondition rejected without an explicit device-verification signal; this response alone does not establish that sign-in is required. Saved credentials preserved; request was not replayed.`,
+        422,
+      );
     if (reply.status === 412)
       throw new AppError(
         "VERIFICATION_REQUIRED",

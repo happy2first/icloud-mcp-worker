@@ -59,6 +59,15 @@ export async function advancePcs(
   const state = consent.body;
   requireNoAppleRejection(state, "requestWebAccessState");
   if (
+    state?.hsaChallengeRequired === true ||
+    state?.hsaTrustedBrowser === false
+  )
+    throw new AppError(
+      "VERIFICATION_REQUIRED",
+      "Apple requestWebAccessState explicitly requires device verification or rejects browser trust. Saved credentials preserved.",
+      409,
+    );
+  if (
     !state ||
     (state.isICDRSDisabled !== undefined &&
       typeof state.isICDRSDisabled !== "boolean") ||
@@ -69,9 +78,9 @@ export async function advancePcs(
       "PROTOCOL_CHANGED",
       "Apple requestWebAccessState returned invalid authorization flags.",
     );
-  if (state.isICDRSDisabled === false) return { state: "READY", checkpoint };
-  // pyicloud defaults the optional consent flag to true. If either field is
-  // absent, verify through requestPCS rather than declaring access ready.
+  // Match pyicloud's optional-field defaults. READY here only completes the
+  // preparation step; /admin still performs a real service read before success.
+  if (state.isICDRSDisabled !== true) return { state: "READY", checkpoint };
   if (state.isDeviceConsentedForPCS === false) {
     if (!checkpoint.consentRequested) {
       const request = await http.setup(

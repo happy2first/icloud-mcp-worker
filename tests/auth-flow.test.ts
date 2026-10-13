@@ -1425,10 +1425,68 @@ test("server auth envelopes reject replay, mixed attempts and premature or incon
 
 for (const flags of [
   {},
+  { isICDRSDisabled: false },
   { isDeviceConsentedForPCS: true },
-  { isICDRSDisabled: true },
 ]) {
-  test(`omitted Apple web authorization flags require confirmed service access: ${JSON.stringify(flags)}`, async () => {
+  test(`optional ICDRS flag follows pyicloud without an unnecessary PCS request: ${JSON.stringify(flags)}`, async () => {
+    const h = scriptedHTTP([{ body: flags }]);
+    const result = await advancePcs(
+      h.http,
+      "123456789",
+      freshPcsCheckpoint(1000),
+      1000,
+    );
+    assert.equal(result.state, "READY");
+    assert.equal(h.requests.length, 1);
+    assert.equal(result.checkpoint.pcsAttempts, 0);
+  });
+}
+
+for (const body of [
+  { hsaChallengeRequired: true },
+  { hsaTrustedBrowser: false },
+]) {
+  test(`optional PCS fields never bypass an explicit trust rejection: ${JSON.stringify(body)}`, async () => {
+    const h = scriptedHTTP([{ body }]);
+    await assert.rejects(
+      advancePcs(h.http, "123456789", freshPcsCheckpoint(1000), 1000),
+      (e: any) => e.code === "VERIFICATION_REQUIRED",
+    );
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+test("PCS HTTP 412 without verification flags is not reported as failed device trust", async () => {
+  const h = scriptedHTTP([
+    { body: { isICDRSDisabled: true } },
+    { status: 412, body: {} },
+  ]);
+  await assert.rejects(
+    advancePcs(h.http, "123456789", freshPcsCheckpoint(1000), 1000),
+    (e: any) =>
+      e.code === "PROTOCOL_CHANGED" &&
+      e.message.includes("HTTP 412") &&
+      e.message.includes("not establish"),
+  );
+  assert.equal(h.requests.length, 2);
+});
+
+test("PCS HTTP 412 with an explicit device challenge remains a verification failure", async () => {
+  const h = scriptedHTTP([
+    { body: { isICDRSDisabled: true } },
+    { status: 412, body: { hsaChallengeRequired: true } },
+  ]);
+  await assert.rejects(
+    advancePcs(h.http, "123456789", freshPcsCheckpoint(1000), 1000),
+    (e: any) => e.code === "VERIFICATION_REQUIRED",
+  );
+});
+
+for (const flags of [
+  { isICDRSDisabled: true },
+  { isICDRSDisabled: true, isDeviceConsentedForPCS: true },
+]) {
+  test(`explicit PCS requirement still requests confirmed service preparation: ${JSON.stringify(flags)}`, async () => {
     const h = scriptedHTTP([{ body: flags }, { body: { status: "success" } }]);
     const r = await advancePcs(
       h.http,
@@ -1446,9 +1504,9 @@ for (const flags of [
     });
   });
 }
-test("omitted web flags do not treat an unconfirmed service response as authorized", async () => {
+test("required PCS does not treat an unconfirmed service response as authorized", async () => {
   const h = scriptedHTTP([
-    { body: {} },
+    { body: { isICDRSDisabled: true } },
     { body: { message: "Cookies not available yet on server." } },
   ]);
   const r = await advancePcs(
@@ -1468,7 +1526,7 @@ test("authorization rejects invalid flags and reports service protocol errors wi
     (e: any) => e.code === "PROTOCOL_CHANGED",
   );
   const bad = scriptedHTTP([
-    { body: {} },
+    { body: { isICDRSDisabled: true } },
     { body: { status: "private-sentinel", message: "private-sentinel" } },
   ]);
   await assert.rejects(

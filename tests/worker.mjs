@@ -79,7 +79,10 @@ const mf = new Miniflare({
       u.hostname === "setup.icloud.com" &&
       u.pathname.endsWith("/requestWebAccessState")
     )
-      return Response.json({ isICDRSDisabled: false });
+      // Optional flags may be absent (including mainland accounts). The
+      // preparation step must not request PCS, but a real service read is still
+      // required before the management check reports a healthy connection.
+      return Response.json({});
     if (
       u.hostname === "p12-drivews.icloud.com" &&
       u.pathname === "/retrieveItemDetailsInFolders"
