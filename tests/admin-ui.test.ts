@@ -401,9 +401,11 @@ test("copy buttons preserve dynamic endpoint and complete result text", async ()
     h.el("copy-mcp").click();
     await Promise.resolve();
     assert.equal(h.copied[0], "https://synthetic.test/mcp");
+    const result = h.el("notice").textContent;
     h.el("copy-result").click();
     await Promise.resolve();
-    assert.equal(h.copied[1], h.el("notice").textContent);
+    assert.equal(h.copied[1], result);
+    assert.equal(h.el("notice").textContent, "已复制");
   } finally {
     h.ui.destroy();
   }
@@ -463,3 +465,80 @@ for (const code of ["VERIFICATION_REQUIRED", "UNSUPPORTED_FEATURE"])
       h.ui.destroy();
     }
   });
+
+test("mobile feedback can be dismissed without losing card error details or copy access", async () => {
+  const state = base();
+  state.services[0].enabled = true;
+  const h = await setup((async (path: any) =>
+    path === "/api/admin/status"
+      ? Response.json(state)
+      : Response.json(
+          {
+            error: {
+              code: "UPSTREAM_UNAVAILABLE",
+              message: "calendar HTTP 503",
+              requestId: "mobile-request",
+            },
+          },
+          { status: 503 },
+        )) as typeof fetch);
+  try {
+    await h.settle();
+    (
+      h.document.querySelector(
+        'button[data-service="calendar"][data-kind="check"]',
+      ) as any
+    ).click();
+    await h.settle();
+    assert.equal(h.el("result-toast").hidden, false);
+    h.el("dismiss-result").click();
+    assert.equal(h.el("result-toast").hidden, true);
+    const result = h.document.querySelector(
+      'article[data-service="calendar"] .operation-result',
+    )!;
+    assert.ok(result.textContent.includes("calendar HTTP 503"));
+    h.el("refresh").click();
+    await h.settle();
+    (
+      h.document.querySelector(
+        'article[data-service="calendar"] .operation-result button',
+      ) as any
+    ).click();
+    await Promise.resolve();
+    assert.ok(h.copied[0].includes("mobile-request"));
+  } finally {
+    h.ui.destroy();
+  }
+});
+test("credential validation stays next to the form after closing the toast", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    h.el("edit-dav").click();
+    h.el("password").value = "invalid";
+    h.el("dav").dispatchEvent(
+      new h.window.Event("submit", { cancelable: true }),
+    );
+    h.el("dismiss-result").click();
+    assert.equal(h.el("dav-result").hidden, false);
+    assert.ok(h.el("dav-result").textContent.includes("16 位"));
+    assert.equal(h.el("page-result").hidden, true);
+  } finally {
+    h.ui.destroy();
+  }
+});
+test("success toast expires automatically", async (t) => {
+  const h = await setup();
+  try {
+    await h.settle();
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    h.el("copy-mcp").click();
+    await Promise.resolve();
+    assert.equal(h.el("result-toast").hidden, false);
+    t.mock.timers.tick(4000);
+    assert.equal(h.el("result-toast").hidden, true);
+  } finally {
+    h.ui.destroy();
+    t.mock.timers.reset();
+  }
+});

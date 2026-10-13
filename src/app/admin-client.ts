@@ -125,17 +125,60 @@ export function mountAdmin(
     (typeof e.retryAfterSeconds === "number"
       ? `\n至少等待 ${Math.ceil(e.retryAfterSeconds)} 秒。`
       : "");
+  const results = new Map<string, { text: string; error: boolean }>();
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  function dismissNotice() {
+    clearTimeout(noticeTimer);
+    el("result-toast").hidden = true;
+  }
+  function renderResult(
+    target: HTMLElement,
+    result?: { text: string; error: boolean },
+  ) {
+    target.replaceChildren();
+    target.hidden = !result;
+    if (!result) return;
+    target.dataset.error = String(result.error);
+    const text = doc.createElement("p");
+    text.textContent = result.text;
+    const button = doc.createElement("button");
+    button.type = "button";
+    button.className = "icon-button";
+    button.innerHTML = copyIcon;
+    button.setAttribute(
+      "aria-label",
+      result.error ? "复制错误信息" : "复制操作结果",
+    );
+    button.onclick = () => void copy(result.text, button);
+    target.appendChild(text);
+    target.appendChild(button);
+  }
+  function renderResults() {
+    for (const scope of ["web", "dav", "page"])
+      renderResult(el(scope + "-result"), results.get(scope));
+    for (const card of doc.querySelectorAll<HTMLElement>(".service-card")) {
+      const target = card.querySelector<HTMLElement>(".operation-result");
+      if (target) renderResult(target, results.get(card.dataset.service!));
+    }
+  }
   async function copy(text: string, button: HTMLButtonElement) {
     try {
       await copyText(text);
       button.title = "已复制";
-      el("copy-feedback").textContent = "已复制";
+      announce("已复制");
     } catch {
       button.title = "复制失败，请手动选择文字复制";
-      el("copy-feedback").textContent = "复制失败，请手动复制";
+      announce("复制失败，请在卡片内手动选择文字复制。", true);
     }
   }
-  function announce(text: string, error = false) {
+  function announce(text: string, error = false, scope?: string) {
+    if (scope) {
+      results.set(scope, { text, error });
+      renderResults();
+    }
+    clearTimeout(noticeTimer);
+    el("result-toast").hidden = false;
+    noticeTimer = setTimeout(dismissNotice, error ? 8000 : 4000);
     el("notice").textContent = text;
     el("notice").dataset.error = String(error);
     el("copy-result").setAttribute(
@@ -284,7 +327,7 @@ export function mountAdmin(
                 key === "enabled" ? (checked ? s.writable : false) : checked,
             });
             return names[s.service] + "设置已保存。";
-          });
+          }, s.service);
         });
       };
       if (s.service !== "findmy") toggle("enabled");
@@ -385,19 +428,24 @@ export function mountAdmin(
                 (r.action === "wait-for-reminders-keys"
                   ? "正在准备数据访问，请稍后继续验证。"
                   : "需要在 iPhone 或 iPad 上批准访问，然后继续验证。");
-        });
+        }, s.service);
       };
+      const result = doc.createElement("div");
+      result.className = "operation-result";
+      result.hidden = true;
+      card.appendChild(result);
       actions.appendChild(check);
       card.appendChild(actions);
       el("services").appendChild(card);
     }
+    renderResults();
     controls();
   }
   async function refresh() {
     current = await api("/api/admin/status");
     render();
   }
-  async function action(run: () => Promise<string>) {
+  async function action(run: () => Promise<string>, scope = "page") {
     if (busy) return;
     busy = true;
     controls();
@@ -407,7 +455,8 @@ export function mountAdmin(
       try {
         workingService = null;
         await refresh();
-        announce(message);
+        if (scope === "page") results.delete("page");
+        announce(message, false, scope === "page" ? undefined : scope);
       } catch (error) {
         current = null;
         announce(
@@ -415,6 +464,7 @@ export function mountAdmin(
             "\n状态刷新失败：" +
             (error instanceof Error ? error.message : "请重试。"),
           true,
+          current ? scope : "page",
         );
       }
     } catch (error) {
@@ -427,6 +477,7 @@ export function mountAdmin(
       announce(
         error instanceof Error ? error.message : "操作失败，请重试。",
         true,
+        current ? scope : "page",
       );
     } finally {
       busy = false;
@@ -437,6 +488,7 @@ export function mountAdmin(
         el("status").textContent = "状态不可用";
         el("dav-entry").hidden = true;
       }
+      renderResults();
       controls();
     }
   }
@@ -469,7 +521,7 @@ export function mountAdmin(
       "",
     );
     if (!/^[a-z]{16}$/.test(compact)) {
-      announce("App 专用密码应为 Apple 生成的 16 位小写字母。", true);
+      announce("App 专用密码应为 Apple 生成的 16 位小写字母。", true, "dav");
       return;
     }
     const expectedVersion = current.dav.version;
@@ -482,7 +534,7 @@ export function mountAdmin(
       });
       davEditing = false;
       return "专用密码已保存。请检查相关服务连接。";
-    });
+    }, "dav");
   };
   el("remove").onclick = () => {
     if (
@@ -496,7 +548,7 @@ export function mountAdmin(
       await api("/api/admin/remove-credentials", { expectedVersion });
       davEditing = false;
       return "专用密码已移除。";
-    });
+    }, "dav");
   };
   el("disconnect").onclick = () => {
     if (
@@ -508,7 +560,7 @@ export function mountAdmin(
     void action(async () => {
       await api("/api/auth/disconnect", {});
       return "网页凭证已移除。";
-    });
+    }, "web");
   };
   el("refresh").onclick = () =>
     void action(async () => "页面状态已刷新，未请求 Apple 服务。");
@@ -526,12 +578,14 @@ export function mountAdmin(
       el("notice").textContent ?? "",
       el<HTMLButtonElement>("copy-result"),
     );
+  el("dismiss-result").onclick = dismissNotice;
   controls();
   void action(async () => "页面状态已更新。");
   const timer = setInterval(controls, 1000);
   return {
     destroy() {
       clearInterval(timer);
+      clearTimeout(noticeTimer);
     },
     get busy() {
       return busy;
