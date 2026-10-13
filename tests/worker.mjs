@@ -222,6 +222,23 @@ try {
     return r.json();
   };
   const tools = await mcp("tools/list", {});
+  const disconnectedStatus = await mcp("tools/call", {
+    name: "connection_status",
+    arguments: {},
+  });
+  assert.equal(disconnectedStatus.result.isError, undefined);
+  assert.equal(
+    disconnectedStatus.result.structuredContent.state,
+    "DISCONNECTED",
+  );
+  assert.equal(
+    disconnectedStatus.result.structuredContent.gates.sessionLifetimeMs,
+    null,
+  );
+  assert.equal(
+    disconnectedStatus.result.structuredContent.gates.retentionDays,
+    null,
+  );
   for (const name of [
     "calendar_delete",
     "contacts_delete",
@@ -404,11 +421,21 @@ try {
     "approve-device-consent",
   );
   const fmipListed = await mcp("tools/call", {
+    name: "connection_status",
+    arguments: {},
+  });
+  assert.equal(fmipListed.result.isError, undefined);
+  assert.equal(
+    fmipListed.result.structuredContent.state,
+    "DEVICE_APPROVAL_PENDING",
+  );
+  assert.equal(fmipListed.result.structuredContent.gates.retentionDays, null);
+  const actualFmipListed = await mcp("tools/call", {
     name: "findmy_list_devices",
     arguments: {},
   });
   assert.equal(
-    fmipListed.result.structuredContent.devices[0].id,
+    actualFmipListed.result.structuredContent.devices[0].id,
     "synthetic-phone",
     JSON.stringify(fmipListed),
   );

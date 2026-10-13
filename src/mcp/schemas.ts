@@ -132,6 +132,8 @@ export const AllOpenOutput = z
       z
         .object({
           code: z.string(),
+          message: z.string().optional(),
+          listId: z.string().optional(),
           retryable: z.boolean(),
           retryAfterSeconds: z.number().nonnegative().optional(),
         })
@@ -243,9 +245,9 @@ export const ConnectionStatusOutput = z
         verificationMethod: z.literal("trusted-device-spake2"),
         passwordLocation: z.literal("browser-only"),
         sessionStorage: z.literal("owner-scoped-encrypted"),
-        sessionLifetimeMs: counter,
+        sessionLifetimeMs: counter.nullable(),
         socketLifetimeMs: counter,
-        retentionDays: counter,
+        retentionDays: counter.nullable(),
         retentionWritesEnabled: z.boolean(),
         renewalEnabled: z.boolean(),
       })

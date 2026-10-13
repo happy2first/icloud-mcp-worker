@@ -1244,6 +1244,8 @@ export class AppleConnectionService {
     const recordErrors: { id: string | null; code: string }[] = [];
     const errors: {
       code: string;
+      message?: string;
+      listId?: string;
       retryable: boolean;
       retryAfterSeconds?: number;
     }[] = [];
@@ -1315,9 +1317,13 @@ export class AppleConnectionService {
       } catch (error) {
         if (
           error instanceof AppError &&
-          ["RATE_LIMITED", "UPSTREAM_UNAVAILABLE", "CONFLICT"].includes(
-            error.code,
-          )
+          [
+            "RATE_LIMITED",
+            "UPSTREAM_UNAVAILABLE",
+            "CONFLICT",
+            "PROTOCOL_CHANGED",
+            "UNSUPPORTED_FEATURE",
+          ].includes(error.code)
         ) {
           // A failed query never acknowledges a page. Expose the rotated token
           // only after checking it is still the owner's current saved scan.
@@ -1341,7 +1347,11 @@ export class AppleConnectionService {
               : null;
           errors.push({
             code: error.code,
-            retryable: true,
+            message: error.message,
+            listId: scan.listIds[scan.index],
+            retryable: !["PROTOCOL_CHANGED", "UNSUPPORTED_FEATURE"].includes(
+              error.code,
+            ),
             ...(retryAfterSeconds !== null &&
             Number.isFinite(retryAfterSeconds) &&
             retryAfterSeconds >= 0

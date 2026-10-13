@@ -54,3 +54,10 @@ pyicloud 的 requestWebAccessState 允许省略 isICDRSDisabled 和 isDeviceCons
 - 修正上一轮的错误处理：因查找触发的 Token 交换失败不再清空共享网页登录记录，也不接受失败响应删除的 Cookie 或返回的新 Token。查找失败与冷却信息独立保存，其他服务不受这个本地失败状态阻断。
 - 账号登录/验证的认证拒绝补充阶段、区域、HTTP 状态及安全布尔字段。通用错误不再建议一律更换 App 专用密码。
 - 回归覆盖大陆区查找 421 后 accountLogin 401 并删除 Cookie 的响应：原始凭证完整保留，再次查找不重试，备忘录操作仍可使用原共享会话。真实 Token 若不可再用，恢复查找仍可能需要用户重新网页登录和验证一次。此前版本已经清除的记录不能由本次补丁恢复。
+
+## 管理端可读但 MCP 状态及全清单汇总失败
+
+- 通过用户实际连接的 icloud MCP 复现 connection_status 的输出校验错误：无限期保存返回 gates.sessionLifetimeMs=null / gates.retentionDays=null，旧输出 schema 却要求数字。已允许 null，未改变会话保存策略。
+- 实测 icloud_status 为 READY，get_reminder_lists 成功读取 8 个列表，单独读取部分列表的事项成功。get_all_open_reminders 报 different CloudKit owner；单独查询“常规提醒”也复现相同错误。不是所有 MCP 查询失效，不能把该错误解释为设备批准未完成。
+- 全清单汇总现在保留此前已经成功读取的结果，遇到协议/不支持错误时返回 complete=false、具体失败 listId/message 和 retryable=false。失败清单游标不推进，继续读取不会误报全部完成。其他账户/区域所有权校验保持，尚未证明该清单错误来自共享清单或协议缺陷。
+- 本地回归覆盖后续清单归属校验失败仍保留前面的结果、失败清单不跳过、重读不误报完整。真实 MCP 的状态 schema 修正需部署后再次验证；没有声称“常规提醒”的所有权问题已修复。

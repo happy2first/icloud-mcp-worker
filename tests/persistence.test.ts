@@ -2271,6 +2271,72 @@ test("an operation crossing expiry during encryption or the final SQL cannot ret
   }
 });
 
+test("all-open retains earlier live records when a later list fails owner validation", async () => {
+  const nativeFetch = globalThis.fetch;
+  const db = new SQLiteD1(),
+    env = testEnv(db, key());
+  env.APPLE_SESSION_RENEWAL_ENABLED = "false";
+  const repo = new AppleSessionRepository(env, owner);
+  const original = appleSession();
+  original.connection.remindersZoneOwner = "__defaultOwner__";
+  const setup = await repo.begin(0);
+  await repo.commit(setup, original, "READY");
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.query.recordType === "Lists")
+      return Response.json({
+        records: ["A", "B"].map((id) => ({
+          recordName: "List/" + id,
+          recordType: "List",
+          fields: { Name: { type: "STRING", value: id } },
+        })),
+      });
+    const listId = body.query.filterBy.find((x: any) => x.fieldName === "List")
+      .fieldValue.value.recordName;
+    return Response.json({
+      records: [
+        {
+          recordName: "Reminder/" + listId.slice(5),
+          recordType: "Reminder",
+          zoneID: {
+            zoneName: "Reminders",
+            ownerRecordName:
+              listId === "List/A" ? "__defaultOwner__" : "_foreign-owner",
+          },
+          fields: {
+            List: { type: "REFERENCE", value: { recordName: listId } },
+            Completed: { type: "INT64", value: 0 },
+          },
+        },
+      ],
+    });
+  };
+  try {
+    const apple = new AppleConnectionService(env, owner);
+    const first = await apple.readAllOpenForMCP(setup.generation);
+    assert.equal(first.result.complete, false);
+    assert.equal(first.result.records.length, 1);
+    assert.equal(first.result.errors[0].code, "PROTOCOL_CHANGED");
+    assert.equal(first.result.errors[0].listId, "List/B");
+    assert.equal(first.result.errors[0].retryable, false);
+    assert.ok(
+      first.result.errors[0].message?.includes("different CloudKit owner"),
+    );
+    assert.equal(first.result.progress.listsCompleted, 1);
+    const next = await apple.readAllOpenForMCP(
+      setup.generation,
+      first.result.continuation,
+    );
+    assert.equal(next.result.complete, false);
+    assert.equal(next.result.progress.listsCompleted, 1);
+    assert.equal(next.result.errors[0].listId, "List/B");
+    assert.equal((await repo.status()).state, "READY");
+  } finally {
+    globalThis.fetch = nativeFetch;
+    db.sqlite.close();
+  }
+});
+
 test("all-open reads cover selectable lists, resume live pages without skips, and fence encrypted continuations", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
@@ -2517,7 +2583,12 @@ test("all-open reads cover selectable lists, resume live pages without skips, an
     assert.equal(transient.result.records.length, 1);
     assert.equal(transient.result.pendingReason, "read_error");
     assert.deepEqual(transient.result.errors, [
-      { code: "UPSTREAM_UNAVAILABLE", retryable: true },
+      {
+        code: "UPSTREAM_UNAVAILABLE",
+        retryable: true,
+        listId: "List/A",
+        message: "Apple could not complete the Reminders read request.",
+      },
     ]);
     assert.equal(
       (await repository.load()).session.allOpenScan?.cursor,
@@ -2600,7 +2671,13 @@ test("all-open reads cover selectable lists, resume live pages without skips, an
     assert.equal(throttled.result.complete, false);
     assert.equal(throttled.result.records.length, 0);
     assert.deepEqual(throttled.result.errors, [
-      { code: "RATE_LIMITED", retryable: true, retryAfterSeconds: 30 },
+      {
+        code: "RATE_LIMITED",
+        retryable: true,
+        retryAfterSeconds: 30,
+        listId: "List/A",
+        message: "Apple rate limited the Reminders read request.",
+      },
     ]);
     now += 30_000;
     replies.push(
