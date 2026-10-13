@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Envelopes, type Envelope } from "../crypto/envelopes.ts";
+import { envelopesFromSecret, type Envelope } from "../crypto/envelopes.ts";
 import { AppError } from "../errors.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 export const ServiceName = z.enum([
@@ -35,10 +35,7 @@ export function db(env: RuntimeEnv) {
 }
 export function cipher(env: RuntimeEnv) {
   try {
-    return new Envelopes(
-      env.ENCRYPTION_KEY_ID ?? "",
-      JSON.parse(env.ENCRYPTION_KEYS_JSON ?? "{}"),
-    );
+    return envelopesFromSecret(env.ENCRYPTION_KEYS_JSON);
   } catch {
     throw new AppError(
       "CONFIGURATION_REQUIRED",

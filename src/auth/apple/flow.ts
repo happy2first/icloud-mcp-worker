@@ -40,7 +40,7 @@ export type AuthEvent =
       state: PcsResult["state"];
       action?: string;
       nextAttemptAt: number;
-      expiresAt: number;
+      expiresAt: number | null;
     };
 type Phase =
   | "new"
@@ -62,13 +62,13 @@ export class AppleSignInFlow {
   readonly signal: AbortSignal;
   readonly persist: (session: AppleSession, result: PcsResult) => Promise<void>;
   readonly connect?: PushConnector;
-  readonly thirtyDays: boolean;
+  readonly thirtyDays?: boolean;
   constructor(
     http: AppleAuthHTTP,
     signal: AbortSignal,
     persist: (session: AppleSession, result: PcsResult) => Promise<void>,
     connect?: PushConnector,
-    thirtyDays = true,
+    thirtyDays?: boolean,
   ) {
     this.http = http;
     this.signal = signal;
@@ -286,7 +286,7 @@ export class AppleSignInFlow {
         ? { action: result.action }
         : {}),
       nextAttemptAt: result.checkpoint.nextAttemptAt,
-      expiresAt: login.expiresAt,
+      expiresAt: login.version === 4 ? null : login.expiresAt,
     };
   }
   close() {

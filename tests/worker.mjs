@@ -30,15 +30,9 @@ const mf = new Miniflare({
   compatibilityDate: "2026-07-30",
   d1Databases: { DB: "local-test" },
   bindings: {
-    APP_ORIGIN: origin,
     TEAM_DOMAIN: issuer,
     POLICY_AUD: "synthetic-aud",
-    REMINDERS_OWNER_ID: owner,
-    ENCRYPTION_KEY_ID: "v1",
     ENCRYPTION_KEYS_JSON: mfEnvKey,
-    APPLE_LOGIN_ENABLED: "true",
-    APPLE_SESSION_RETENTION_WRITES: "absolute-30d-v1",
-    APPLE_SESSION_RENEWAL_ENABLED: "saved-tokens-v1",
   },
   outboundService: async (req) => {
     const u = new URL(req.url);
@@ -99,7 +93,7 @@ try {
         },
       })
     ).status,
-    403,
+    200,
   );
   const home = await request("/admin");
   assert.equal(home.status, 200);
@@ -138,6 +132,27 @@ try {
   });
   assert.equal(saved.status, 200, await saved.clone().text());
   assert.equal((await saved.json()).version, 1);
+  const otherStatus = await request("/api/admin/status", undefined, {
+    "cf-access-jwt-assertion": await sign("other"),
+    "oai-authenticated-user-id": owner,
+  });
+  assert.equal(otherStatus.status, 200);
+  const separate = await otherStatus.json();
+  assert.equal(separate.dav.configured, false);
+  assert.ok(separate.services.every((service) => !service.enabled));
+  const otherRemove = await request(
+    "/api/admin/remove-credentials",
+    { expectedVersion: 1 },
+    {
+      "cf-access-jwt-assertion": await sign("other"),
+      "oai-authenticated-user-id": owner,
+    },
+  );
+  assert.equal(otherRemove.status, 409);
+  assert.equal(
+    (await (await request("/api/admin/status")).json()).dav.configured,
+    true,
+  );
   const row = await db.prepare("SELECT envelope FROM credentials").first();
   assert.ok(!row.envelope.includes("aaaa-bbbb"));
   assert.ok(!row.envelope.includes("synthetic@example.invalid"));
@@ -293,7 +308,6 @@ try {
   const ticketEnv = {
     DB: db,
     APP_ORIGIN: origin,
-    ENCRYPTION_KEY_ID: "v1",
     ENCRYPTION_KEYS_JSON: mfEnvKey,
     APPLE_LOGIN_ENABLED: "true",
     APPLE_SESSION_RETENTION_WRITES: "absolute-30d-v1",

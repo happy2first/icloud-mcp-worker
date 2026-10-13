@@ -12,7 +12,10 @@ export interface CloudflareAccessEnv extends RuntimeEnv {
   POLICY_AUD?: string;
 }
 
-export type AuthenticatedFetch = (request: Request) => Promise<Response>;
+export type AuthenticatedFetch = (
+  request: Request,
+  env: CloudflareAccessEnv,
+) => Promise<Response>;
 
 interface AccessConfig {
   issuer: string;
@@ -44,13 +47,15 @@ function errorResponse(
   );
 }
 
-function readConfig(env: CloudflareAccessEnv): AccessConfig | null {
+function readConfig(
+  env: CloudflareAccessEnv,
+  request: Request,
+): AccessConfig | null {
   if (
     typeof env.TEAM_DOMAIN !== "string" ||
     typeof env.POLICY_AUD !== "string" ||
     !env.POLICY_AUD ||
-    env.POLICY_AUD.length > 512 ||
-    typeof env.APP_ORIGIN !== "string"
+    env.POLICY_AUD.length > 512
   )
     return null;
 
@@ -58,7 +63,7 @@ function readConfig(env: CloudflareAccessEnv): AccessConfig | null {
   let app: URL;
   try {
     team = new URL(env.TEAM_DOMAIN);
-    app = new URL(env.APP_ORIGIN);
+    app = new URL(env.APP_ORIGIN ?? new URL(request.url).origin);
   } catch {
     return null;
   }
@@ -87,7 +92,7 @@ function readConfig(env: CloudflareAccessEnv): AccessConfig | null {
     app.search ||
     app.hash ||
     app.pathname !== "/" ||
-    app.origin !== env.APP_ORIGIN ||
+    (env.APP_ORIGIN !== undefined && app.origin !== env.APP_ORIGIN) ||
     app.hostname.includes(":") ||
     !app.hostname.includes(".") ||
     app.hostname === "localhost" ||
@@ -206,7 +211,7 @@ export function createCloudflareAccessHandler(
     env: CloudflareAccessEnv,
     next: AuthenticatedFetch,
   ): Promise<Response> {
-    const config = readConfig(env);
+    const config = readConfig(env, request);
     if (!config)
       return errorResponse(
         503,
@@ -282,12 +287,7 @@ export function createCloudflareAccessHandler(
         "The Cloudflare Access assertion is invalid.",
       );
 
-    const isInitialIdentityRead =
-      new URL(request.url).pathname === "/api/bootstrap/identity" &&
-      request.method === "GET";
-    if (
-      config.ownerId ? identity.sub !== config.ownerId : !isInitialIdentityRead
-    ) {
+    if (config.ownerId && identity.sub !== config.ownerId) {
       return errorResponse(
         403,
         "FORBIDDEN",
@@ -295,7 +295,13 @@ export function createCloudflareAccessHandler(
       );
     }
 
-    return next(withVerifiedIdentity(request, identity));
+    // Per-request context, derived only after signature/issuer/audience validation.
+    // Never mutate the shared Workers env or accept caller identity headers.
+    return next(withVerifiedIdentity(request, identity), {
+      ...env,
+      APP_ORIGIN: config.appOrigin,
+      REMINDERS_OWNER_ID: identity.sub,
+    });
   };
 }
 

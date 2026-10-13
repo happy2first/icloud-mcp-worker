@@ -3,6 +3,7 @@ import { AuthSnapshotSchema, type AuthSnapshot } from "../auth/apple/http.ts";
 import type { PcsCheckpoint } from "../auth/apple/pcs.ts";
 import {
   Envelopes,
+  envelopesFromSecret,
   type Envelope,
   type EnvelopeContext,
 } from "../crypto/envelopes.ts";
@@ -303,23 +304,7 @@ interface StateRow extends SessionFence {
 type FenceRow = SessionFence;
 
 function configuredEnvelopes(env: RuntimeEnv) {
-  if (!env.ENCRYPTION_KEY_ID || !env.ENCRYPTION_KEYS_JSON)
-    throw new AppError(
-      "CONFIGURATION_REQUIRED",
-      "The server-only encryption secret must be configured before Apple sessions can be stored.",
-      503,
-    );
-  let keys: unknown;
-  try {
-    keys = JSON.parse(env.ENCRYPTION_KEYS_JSON);
-  } catch {
-    throw new AppError(
-      "CONFIGURATION_REQUIRED",
-      "The encryption key ring is invalid.",
-      503,
-    );
-  }
-  return new Envelopes(env.ENCRYPTION_KEY_ID, keys as Record<string, string>);
+  return envelopesFromSecret(env.ENCRYPTION_KEYS_JSON);
 }
 
 function invalidSession() {
@@ -475,12 +460,18 @@ export class AppleSessionRepository {
           nextAttemptAt: saved.session.pcs.nextAttemptAt,
           transportReady: saved.state === "READY",
           liveReadValidated: false,
-          expiresAt: saved.session.login.expiresAt,
+          expiresAt:
+            saved.session.login.version === 4
+              ? null
+              : saved.session.login.expiresAt,
           retentionDays:
-            (saved.session.login.expiresAt - saved.session.login.verifiedAt) /
-            86_400_000,
+            saved.session.login.version === 4
+              ? null
+              : (saved.session.login.expiresAt -
+                  saved.session.login.verifiedAt) /
+                86_400_000,
           retentionSource:
-            saved.session.login.version === 3
+            saved.session.login.version !== 2
               ? saved.session.login.retentionSource
               : "legacy-consent",
           lastValidatedAt: saved.session.renewal?.lastValidatedAt ?? null,

@@ -184,20 +184,26 @@ test("rollout gates are independent, consent text follows server policy and inte
     LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
     APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",
   };
-  assert.equal(appleGates(approved).retentionWritesEnabled, false);
-  assert.equal(appleGates(approved).renewalEnabled, false);
+  assert.equal(appleGates(approved).retentionWritesEnabled, true);
+  assert.equal(appleGates(approved).renewalEnabled, true);
+  assert.equal(appleGates({}).enabled, true);
+  assert.equal(appleGates({ APPLE_LOGIN_ENABLED: "false" }).enabled, false);
+  assert.equal(
+    appleGates({ APPLE_SESSION_RENEWAL_ENABLED: "false" }).renewalEnabled,
+    false,
+  );
   const env = {
     ...approved,
     APPLE_SESSION_RETENTION_WRITES: "absolute-30d-v1",
   };
-  assert.equal(appleGates(env).sessionLifetimeMs, 2_592_000_000);
+  assert.equal(appleGates(env).sessionLifetimeMs, null);
   assert.equal(appleGates(env).loginPolicy, "device-only-v2");
   assert.equal(appleGates(env).socketLifetimeMs, 180_000);
   const html = await credentialDocument(
     new Request("https://synthetic.invalid/connect/apple"),
     env,
   ).text();
-  assert.ok(html.includes("最长保存 30 天"));
+  assert.ok(html.includes("本地永久保留"));
   assert.ok(!html.includes("最长保存 1 天"));
   assert.equal(sessionCheckInterval({}), 21_600_000);
   assert.equal(

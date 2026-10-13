@@ -82,7 +82,7 @@ const key = () =>
   });
 const owner = "synthetic-owner";
 const appleSession = (): AppleSession => ({
-  login: loginAssurance(),
+  login: loginAssurance(Date.now(), true),
   auth: {
     clientId: "auth-session-123",
     headers: { "X-Apple-Session-Token": "header-session-secret" },
@@ -238,7 +238,6 @@ const appleRepo = (db: SQLiteD1, who = owner, envelopes = key()) =>
   new AppleSessionRepository(
     {
       ...db.env(),
-      ENCRYPTION_KEY_ID: envelopes.active,
       ENCRYPTION_KEYS_JSON: JSON.stringify(envelopes.keys),
     },
     who,
@@ -248,7 +247,6 @@ const appleRepo = (db: SQLiteD1, who = owner, envelopes = key()) =>
 const testEnv = (db: SQLiteD1, envelopes: Envelopes) => ({
   ...db.env(),
   REMINDERS_OWNER_ID: owner,
-  ENCRYPTION_KEY_ID: envelopes.active,
   ENCRYPTION_KEYS_JSON: JSON.stringify(envelopes.keys),
   APPLE_LOGIN_ENABLED: "true",
   LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
@@ -282,7 +280,7 @@ const hasCode = (code: string) => (error: unknown) =>
 test("legacy and retained assurance variants stay strict and separate authentication from retention", () => {
   const now = Date.parse("2026-10-09T19:25:12.131Z");
   const legacy = loginAssurance(now, false);
-  const current = loginAssurance(now);
+  const current = loginAssurance(now, true);
   assert.equal(legacy.expiresAt - now, 86_400_000);
   assert.equal(current.expiresAt - now, 2_592_000_000);
   assert.equal(current.policy, legacy.policy);
@@ -1119,7 +1117,6 @@ test("missing encryption keys and conflicting setup leases preserve the retained
     const missing = new AppleSessionRepository(
       {
         ...env,
-        ENCRYPTION_KEY_ID: otherKeys.active,
         ENCRYPTION_KEYS_JSON: JSON.stringify(otherKeys.keys),
       },
       owner,
@@ -1907,11 +1904,39 @@ test("tampered ciphertext fails closed and an invalid decrypted snapshot is inva
   assert.equal(invalidated.envelope, null);
 });
 
+test("new permanent sessions restore decades later while read leases remain short and owner scoped", async () => {
+  await fixedClock(async (clock) => {
+    const db = new SQLiteD1(),
+      repository = appleRepo(db),
+      session = appleSession();
+    session.login = loginAssurance(clock.now);
+    assert.equal(session.login.version, 4);
+    assert.equal(LoginAssuranceSchema.safeParse(session.login).success, true);
+    const setup = await repository.begin(0);
+    await repository.commit(setup, session, "READY");
+    clock.now += 100 * 365 * 86_400_000;
+    const status = await repository.status();
+    assert.equal(status.state, "READY");
+    assert.equal(status.expiresAt, null);
+    assert.equal(status.retentionDays, null);
+    const read = await repository.claimRead(status.generation, status.version);
+    assert.ok(read.expiresAt - clock.now <= 30_000);
+    await assert.rejects(
+      appleRepo(db, "other-user").load(),
+      hasCode("NOT_CONNECTED"),
+    );
+    const restored = await repository.load();
+    assert.deepEqual(restored.session.login, session.login);
+    assert.equal((await repository.status()).expiresAt, null);
+    db.sqlite.close();
+  });
+});
+
 test("absolute login expiry invalidates old policy sessions and cannot slide during operations", async () => {
   const db = new SQLiteD1(),
     repository = appleRepo(db),
     session = appleSession();
-  session.login = loginAssurance(Date.now() - 10_000);
+  session.login = loginAssurance(Date.now() - 10_000, true);
   const setup = await repository.begin(0);
   await repository.commit(setup, session, "READY");
   const saved = await repository.status(),
@@ -1936,7 +1961,7 @@ test("absolute login expiry invalidates old policy sessions and cannot slide dur
   const expired = await repository.envelopes.encrypt(
     {
       ...session,
-      login: loginAssurance(Date.now() - SESSION_RETENTION_MS - 1),
+      login: loginAssurance(Date.now() - SESSION_RETENTION_MS - 1, true),
     },
     context,
   );
@@ -2038,8 +2063,8 @@ test("all-open reads cover selectable lists, resume live pages without skips, an
   const env = {
     ...db.env(),
     REMINDERS_OWNER_ID: owner,
-    ENCRYPTION_KEY_ID: repository.envelopes.active,
     ENCRYPTION_KEYS_JSON: JSON.stringify(repository.envelopes.keys),
+    APPLE_SESSION_RENEWAL_ENABLED: "false",
     APPLE_LOGIN_ENABLED: "true",
     LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
     APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",
@@ -2444,8 +2469,8 @@ test("direct list snapshots replace only after complete discovery and preserve f
   const env = {
     ...db.env(),
     REMINDERS_OWNER_ID: owner,
-    ENCRYPTION_KEY_ID: repository.envelopes.active,
     ENCRYPTION_KEYS_JSON: JSON.stringify(repository.envelopes.keys),
+    APPLE_SESSION_RENEWAL_ENABLED: "false",
     APPLE_LOGIN_ENABLED: "true",
     LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
     APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",
@@ -2617,8 +2642,8 @@ test("known-list reads authorize live without any historical checkpoint and fenc
   await repository.commit(setup, session, "READY");
   const env = {
     ...db.env(),
-    ENCRYPTION_KEY_ID: repository.envelopes.active,
     ENCRYPTION_KEYS_JSON: JSON.stringify(repository.envelopes.keys),
+    APPLE_SESSION_RENEWAL_ENABLED: "false",
     APPLE_LOGIN_ENABLED: "true",
     LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
     APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",
@@ -2795,8 +2820,8 @@ test("direct all-open resumes its original list selection without rediscovery af
   await repository.commit(setup, session, "READY");
   const env = {
     ...db.env(),
-    ENCRYPTION_KEY_ID: repository.envelopes.active,
     ENCRYPTION_KEYS_JSON: JSON.stringify(repository.envelopes.keys),
+    APPLE_SESSION_RENEWAL_ENABLED: "false",
     APPLE_LOGIN_ENABLED: "true",
     LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
     APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",

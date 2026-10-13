@@ -141,3 +141,29 @@ export class Envelopes {
     }
   }
 }
+
+// Keep the existing envelope/key names readable, without an active-key setting.
+export function envelopesFromSecret(secret?: string): Envelopes {
+  let keys: unknown;
+  try {
+    keys = JSON.parse(secret ?? "{}");
+  } catch {
+    throw new AppError(
+      "CONFIGURATION_REQUIRED",
+      "ENCRYPTION_KEYS_JSON must be valid JSON.",
+      503,
+    );
+  }
+  if (
+    !keys ||
+    typeof keys !== "object" ||
+    Array.isArray(keys) ||
+    Object.keys(keys).length !== 1
+  )
+    throw new AppError(
+      "CONFIGURATION_REQUIRED",
+      "ENCRYPTION_KEYS_JSON must contain exactly one 32-byte encryption key.",
+      503,
+    );
+  return new Envelopes(Object.keys(keys)[0], keys as Record<string, string>);
+}

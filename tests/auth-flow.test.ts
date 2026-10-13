@@ -473,10 +473,8 @@ test("HSA2 bridge orders step 0 before pushes and step 2/4/validate/done, filter
   );
   assert.equal(requests[0].url.searchParams.get("authVersion"), "latest");
   assert.equal(saved().session.login.factor, "trusted-device-spake2");
-  assert.equal(
-    complete.expiresAt - saved().session.login.verifiedAt,
-    2_592_000_000,
-  );
+  assert.equal(complete.expiresAt, null);
+  assert.equal(saved().session.login.version, 4);
 
   const bridgeRequests = requests.filter(
     (request) =>
@@ -928,7 +926,6 @@ test("the auth socket rejects a valid message bound to another transaction befor
       APPLE_LOGIN_ENABLED: "true",
       LIVE_APPLE_CONNECTION_APPROVED: "controlled-device-v2",
       APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",
-      ENCRYPTION_KEY_ID: "synthetic",
       ENCRYPTION_KEYS_JSON: JSON.stringify({
         synthetic: b64(new Uint8Array(32)),
       }),

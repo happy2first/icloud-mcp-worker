@@ -176,10 +176,9 @@ export class AppleSessionRenewal {
       Date.now(),
     );
     if (blocked) throw blocked;
-    if (this.env.APPLE_SESSION_RENEWAL_ENABLED !== "saved-tokens-v1")
-      return saved;
+    if (this.env.APPLE_SESSION_RENEWAL_ENABLED === "false") return saved;
     if (
-      !this.env.REMINDERS_OWNER_ID ||
+      this.env.REMINDERS_OWNER_ID &&
       this.repository.owner !== this.env.REMINDERS_OWNER_ID
     )
       throw new AppError(

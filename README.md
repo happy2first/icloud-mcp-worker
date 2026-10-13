@@ -26,7 +26,7 @@
 - `/admin` 为统一管理页；`/connect/apple` 为该管理流程的独立凭证页面。
 - Apple 主密码只在管理页浏览器中用于 SRP 计算，Worker 接收证明而非主密码。现代可信设备 2FA/SPAKE2 验证后，将 Cookie、会话 Token 加密存入 D1。SMS、电话、旧六位验证码协议及硬件安全密钥不支持；缺少兼容挑战时明确返回 `UNSUPPORTED_AUTH`，不会降级。
 - 日历、通讯录使用管理页录入的 Apple **App 专用密码**，同样加密保存；不将其放在普通环境变量。
-- 会话复用并执行有界的 `/validate`、必要时一次 `/accountLogin` Token 恢复。固定本地保留期为 30 天；Apple 可更早撤销会话。重连前不会用主密码后台登录。
+- 默认启用 Apple 登录和会话复用，执行有界的 `/validate`、必要时一次 `/accountLogin` Token 恢复。新会话本地永久保留，直到主动断开或确认 Apple 撤销；Apple 仍可能要求重新登录。不会用主密码后台登录。
 - PCS 授权分别记录 `reminders`、`notes3`、`photos`、`iclouddrive`，通过管理按钮申请/继续检查。每次最多两个请求，不在 Worker 内等待轮询。
 - 设备验证后先保存网页会话，再逐项申请 PCS；不以提醒事项 PCS 成功作为保存账户登录的前提。管理页显示等待倒计时，操作中防止重复提交，停用服务同时关闭写权限。
 - AES-256-GCM 使用随机 IV、owner/account/generation/record 绑定的 AAD。密钥环只配置到 Workers Secrets。D1 版本与租约保护网页会话并发更新；DAV 用 ETag/If-Match，创建用稳定 UUID 和 If-None-Match。
@@ -47,14 +47,10 @@ cp wrangler.toml wrangler.local.toml
 
 | 配置 | 内容 |
 |---|---|
-| `APP_ORIGIN` | 例如 `https://icloud.mcp.example.com`，无尾斜杠 |
 | `TEAM_DOMAIN` | 完整 `https://your-team.cloudflareaccess.com` |
 | `POLICY_AUD` | 保护整个 Worker 域名的 Access 应用 Audience |
-| `REMINDERS_OWNER_ID` | 允许的 Access JWT `sub`；沿用上游变量名，但绑定整个 iCloud MCP |
-| `APPLE_LOGIN_ENABLED` | `true` 开启管理页登录；`false` 禁止发起新的登录 |
-| `APPLE_SESSION_RENEWAL_ENABLED` | `saved-tokens-v1` |
-| `APPLE_SESSION_RETENTION_WRITES` | `absolute-30d-v1` |
-| `ENCRYPTION_KEY_ID` | `v1`，应与密钥环匹配 |
+
+普通变量只需 TEAM_DOMAIN、POLICY_AUD，可直接在 Cloudflare Dashboard 配置；`keep_vars=true` 保留它们。密钥另存为 Secret `ENCRYPTION_KEYS_JSON`，格式仍为 `{"v1":"32字节Base64密钥"}`，只放一把密钥，无需配置密钥编号。不要更换已有密钥或 JSON 名称，否则已有密文不能解密。登录/恢复默认开启，可分别用 APPLE_LOGIN_ENABLED=false / APPLE_SESSION_RENEWAL_ENABLED=false 暂停；不再使用保留期变量。
 
 密钥在本机生成，通过 Dashboard Secrets 或以下交互命令录入，**不要在聊天发送**：
 
@@ -68,9 +64,9 @@ npx wrangler deploy --config wrangler.local.toml
 
 为自定义域名创建 Cloudflare Access 应用，保护**整个 hostname**，仅允许你的身份。在该应用 Advanced settings 开启 **Managed OAuth**，不要另建 Worker OAuth 服务器。本 Worker 验证 `Cf-Access-Jwt-Assertion` 的签名、issuer、audience、sub 和有效期，并移除伪造身份头。参考 [Cloudflare 官方说明](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)。
 
-首次获取 `sub`：暂不填写 `REMINDERS_OWNER_ID`，通过 Access 登录后访问 `/api/bootstrap/identity`，读取 `authenticatedUserId`，配置该值并再次部署。未配置 owner 时其他页面及 MCP 均拒绝访问，不自动认领。
+无需配置域名或 owner 身份变量。Worker 使用实际 HTTPS 请求域名进行同源校验；用签名验证后的 Access JWT sub 隔离 D1 凭证、会话、服务权限及下载票据。Access 策略负责只允许本人进入；允许另一身份时，其数据独立，不会获得你的会话。旧 APP_ORIGIN / REMINDERS_OWNER_ID 若还保留，会作为额外限制；要使用自动识别可删除它们。
 
-`workers_dev=false`、`preview_urls=false`；不要以开发域名绕过 Access。密钥轮换时保留旧 key ID 的 Secret，直到旧会话/专用密码重存；删除旧密钥会使对应密文不可恢复。
+`workers_dev=false`、`preview_urls=false`；部署自定义域名并保护整个 hostname。旧版 1/30 天会话仍可读取，但重新登录一次才采用永久策略；不要改数据库密文伪造认证证据。Apple 会话有效期、PCS 检查窗口、登录交互及临时下载票据期限不受永久保留策略影响。
 
 ## 连接 ChatGPT 与联调
 

@@ -2,7 +2,7 @@ import { AppError, publicError } from "../errors.ts";
 import { hex } from "../crypto/bytes.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 import { AppleSessionRepository } from "../persistence/apple-sessions.ts";
-import { appleGates, requireAppleEnabled } from "./gates.ts";
+import { requireAppleEnabled } from "./gates.ts";
 import { AppleAuthHTTP } from "./apple/http.ts";
 import { AppleSignInFlow } from "./apple/flow.ts";
 import {
@@ -90,8 +90,6 @@ export async function appleAuthSocket(
         result.state === "DEVICE_APPROVAL_PENDING" ? result.action : undefined,
       );
     },
-    undefined,
-    appleGates(env).retentionWritesEnabled,
   );
   const clean = () => {
     if (closed()) return;

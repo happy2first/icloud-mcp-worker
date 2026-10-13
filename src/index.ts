@@ -29,7 +29,7 @@ import client from "./client.generated.ts";
 import adminScript from "./admin.generated.ts";
 const worker = {
   async fetch(request: Request, env: CloudflareAccessEnv) {
-    return cloudflareAccessFetch(request, env, async (authenticated) => {
+    return cloudflareAccessFetch(request, env, async (authenticated, env) => {
       try {
         const path = new URL(authenticated.url).pathname;
         if (path === "/api/bootstrap/identity")

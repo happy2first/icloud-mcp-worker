@@ -25,7 +25,7 @@ The Chinese management UI now uses mobile-first service cards and matching login
 
 The management flow uses `/admin` and its isolated `/connect/apple` credential document. The primary password is used for SRP proofs in the browser only; the Worker receives authentication proofs. Modern trusted-device SPAKE2 verification is reused from Xzese; SMS/phone/legacy code and hardware security keys are unsupported, without fallback.
 
-The web session is shared by Reminders, Notes, Photos, and Drive. Separate PCS state is stored for `reminders`, `notes3`, `photos`, and `iclouddrive`. Each approval check makes at most two requests and returns pending state without sleeping. Saved cookies/tokens are validated and may be recovered through one bounded token exchange. The absolute local retention window is 30 days; Apple may revoke access earlier. Primary passwords are never saved or used for background login.
+The web session is shared by Reminders, Notes, Photos, and Drive. Separate PCS state is stored for `reminders`, `notes3`, `photos`, and `iclouddrive`. Each approval check makes at most two requests and returns pending state without sleeping. Login and saved-token recovery default on. New sessions have no local retention deadline; Apple may still revoke access or require sign-in. Primary passwords are never saved or used for background login.
 
 Verified account credentials are persisted before service PCS requests. Authorize each service from its card after returning from login; Reminders approval failure does not discard a verified account login. Actions are serialized and show persisted PCS cooldowns. Disabling a service clears its write permission. App-specific password paste supports spaces/hyphens or 16 lowercase letters; stored credentials must still pass separate live DAV checks.
 
@@ -33,7 +33,7 @@ Calendar and Contacts use an app-specific password entered in the management pag
 
 ## Deploy
 
-Production deployment remains unverified. For Git-connected Cloudflare Workers Builds, use `npm run build` as the build command and `npm run deploy:cloud` as the deploy command. Wrangler reuses or provisions the named D1 database; the deploy script then applies the non-destructive initial schema. The tracked configuration no longer contains a placeholder database ID. The ignored local configuration below is not available to cloud builds. Configure your custom hostname and Access variables in the tracked configuration, and store `ENCRYPTION_KEYS_JSON` as a runtime Worker Secret. The build token needs Worker deployment and D1 read/write permissions. See the [cloud deployment checklist](docs/USER-GUIDE.md#11-cloudflare-workers-builds从-github-部署).
+Production deployment remains unverified. For Git-connected Cloudflare Workers Builds, use `npm run build` as the build command and `npm run deploy:cloud` as the deploy command. Wrangler reuses or provisions the named D1 database; the deploy script then applies the non-destructive initial schema. The tracked configuration no longer contains a placeholder database ID. The ignored local configuration below is not available to cloud builds. Set up a custom hostname and the two Access variables in the Dashboard, and store `ENCRYPTION_KEYS_JSON` as a runtime Worker Secret. The build token needs Worker deployment and D1 read/write permissions. See the [cloud deployment checklist](docs/USER-GUIDE.md#11-cloudflare-workers-builds从-github-部署).
 
 ```bash
 npm ci
@@ -46,14 +46,10 @@ Edit the ignored local config: replace the database ID, add a custom-domain rout
 
 | Variable | Value |
 |---|---|
-| `APP_ORIGIN` | Exact HTTPS application origin, no trailing slash |
 | `TEAM_DOMAIN` | Full `https://your-team.cloudflareaccess.com` |
 | `POLICY_AUD` | Access application audience protecting the entire hostname |
-| `REMINDERS_OWNER_ID` | Allowed Access JWT `sub`; upstream name retained, applies to all services |
-| `APPLE_LOGIN_ENABLED` | `true` enables browser sign-ins and web-session service operations |
-| `APPLE_SESSION_RENEWAL_ENABLED` | `saved-tokens-v1` |
-| `APPLE_SESSION_RETENTION_WRITES` | `absolute-30d-v1` |
-| `ENCRYPTION_KEY_ID` | Active key identifier, e.g. `v1` |
+
+Only TEAM_DOMAIN and POLICY_AUD are required ordinary variables; configure them in the Dashboard (`keep_vars=true`). The runtime Secret ENCRYPTION_KEYS_JSON contains exactly one key, e.g. `{"v1":"32-byte-base64-key"}`. No key identifier variable is needed. Preserve the existing key and JSON name to retain decryptability. APPLE_LOGIN_ENABLED=false and APPLE_SESSION_RENEWAL_ENABLED=false are optional emergency switches; the retention variable is unused.
 
 Generate a 32-byte key locally and enter the JSON key ring through Workers Secrets. Never send passwords, codes, keys, cookies, or tokens in chat.
 
@@ -67,7 +63,7 @@ npx wrangler deploy --config wrangler.local.toml
 
 Protect the entire custom hostname with one Cloudflare Access application and an owner-only policy. Enable **Managed OAuth** in its advanced settings; do not deploy a second OAuth server. The Worker verifies the forwarded Access JWT signature, issuer, audience, expiry and owner, stripping spoofed identity headers. See [official Cloudflare instructions](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/).
 
-To obtain the owner ID, deploy initially without `REMINDERS_OWNER_ID`, sign into Access and visit `/api/bootstrap/identity`. Configure its `authenticatedUserId` and redeploy. All other application/MCP routes stay blocked until an owner is explicitly configured. `workers_dev` and preview URLs remain disabled. Keep old keys in the Secret key ring during rotation until credentials and sessions have been rewritten.
+The HTTPS request origin is derived automatically and browser actions remain same-origin checked. Credentials, sessions, service permissions and tickets use the verified Access JWT sub as their namespace. Keep the Access policy restricted to yourself; another admitted identity gets independent data. APP_ORIGIN and REMINDERS_OWNER_ID are optional legacy restrictions and can be removed. workers.dev and preview URLs remain disabled. Old 1/30-day login records remain compatible; sign in once to adopt unlimited retention. Apple-issued cookies/tokens, PCS checkpoints, login leases and download tickets keep their own validity limits.
 
 ## Connect and validate
 

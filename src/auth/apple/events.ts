@@ -54,7 +54,7 @@ export const ServerAuthEvent = z.discriminatedUnion("type", [
         .enum(["approve-device-consent", "wait-for-reminders-keys"])
         .optional(),
       nextAttemptAt: z.number().int().nonnegative().safe(),
-      expiresAt: z.number().int().positive().safe(),
+      expiresAt: z.number().int().positive().safe().nullable(),
     })
     .strict(),
   z

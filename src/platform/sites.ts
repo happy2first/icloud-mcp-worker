@@ -4,7 +4,6 @@ export interface RuntimeEnv {
   DB?: D1Database;
   REMINDERS_OWNER_ID?: string;
   APP_ORIGIN?: string;
-  ENCRYPTION_KEY_ID?: string;
   ENCRYPTION_KEYS_JSON?: string;
   LIVE_APPLE_CONNECTION_APPROVED?: string;
   APPLE_CRYPTO_REVIEW_APPROVED?: string;

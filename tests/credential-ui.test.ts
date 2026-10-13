@@ -156,12 +156,13 @@ test("login clears secrets, exposes code only at the actual challenge and return
       state: "complete",
       result: {
         state: "DEVICE_APPROVAL_PENDING",
-        expiresAt: Date.now() + 300000,
+        expiresAt: null,
       },
     });
     assert.equal(h.el("continue").hidden, false);
     assert.equal(h.el("continue").getAttribute("href"), "/admin");
     assert.match(h.el("message").textContent, /网页会话已加密保存/);
+    assert.match(h.el("message").textContent, /本地永久保留/);
     assert.match(h.el("message").textContent, /授权/);
     assert.ok(!h.el("message").textContent.includes("123456"));
   } finally {

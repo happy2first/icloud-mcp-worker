@@ -124,7 +124,7 @@ function update(value: BrowserSignInUpdate) {
     form.hidden = true;
     back.hidden = false;
     announce(
-      `账户与设备验证完成，网页会话已加密保存，最晚于 ${new Date(value.result.expiresAt).toLocaleString("zh-CN")} 到期。返回管理页逐项申请提醒事项、备忘录、照片和云盘的数据授权。`,
+      `账户与设备验证完成，网页会话已加密保存，${value.result.expiresAt === null ? "本地永久保留；Apple 仍可能要求重新验证" : "最晚于 " + new Date(value.result.expiresAt).toLocaleString("zh-CN") + " 到期"}。返回管理页逐项申请提醒事项、备忘录、照片和云盘的数据授权。`,
     );
   }
 }

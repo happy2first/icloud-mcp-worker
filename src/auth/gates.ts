@@ -1,8 +1,7 @@
 import { AppError } from "../errors.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 export function appleGates(env: RuntimeEnv) {
-  const retained = env.APPLE_SESSION_RETENTION_WRITES === "absolute-30d-v1";
-  const enabled = env.APPLE_LOGIN_ENABLED === "true";
+  const enabled = env.APPLE_LOGIN_ENABLED !== "false";
   return {
     enabled,
     liveConnectionApproved: false,
@@ -11,10 +10,10 @@ export function appleGates(env: RuntimeEnv) {
     verificationMethod: "trusted-device-spake2",
     passwordLocation: "browser-only",
     sessionStorage: "owner-scoped-encrypted",
-    sessionLifetimeMs: retained ? 2592000000 : 86400000,
-    retentionDays: retained ? 30 : 1,
-    retentionWritesEnabled: retained,
-    renewalEnabled: env.APPLE_SESSION_RENEWAL_ENABLED === "saved-tokens-v1",
+    sessionLifetimeMs: null,
+    retentionDays: null,
+    retentionWritesEnabled: true,
+    renewalEnabled: env.APPLE_SESSION_RENEWAL_ENABLED !== "false",
     socketLifetimeMs: 180000,
   } as const;
 }

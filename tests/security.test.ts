@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { gzipSync } from "node:zlib";
-import { Envelopes } from "../src/crypto/envelopes.ts";
+import { Envelopes, envelopesFromSecret } from "../src/crypto/envelopes.ts";
 import { b64, utf8 } from "../src/crypto/bytes.ts";
 import { CookieJar } from "../src/transport/cookie-jar.ts";
 import { AppleHTTP, validatedAppleURL } from "../src/transport/apple-http.ts";
@@ -9,6 +9,39 @@ import { validatedPushURL } from "../src/transport/apple-push.ts";
 import { decodeDocument } from "../src/reminders/crdt.ts";
 import { applicationRoute } from "../src/api/router.ts";
 import { publicError } from "../src/errors.ts";
+
+test("single Secret chooses the key automatically and preserves existing encrypted records", async () => {
+  const secret = b64(crypto.getRandomValues(new Uint8Array(32)));
+  const old = new Envelopes("v1", { v1: secret });
+  const context = {
+    ownerId: "first",
+    accountId: "apple",
+    generation: 1,
+    recordId: "session",
+    schemaVersion: 1 as const,
+  };
+  const envelope = await old.encrypt({ token: "synthetic" }, context);
+  const automatic = envelopesFromSecret(JSON.stringify({ v1: secret }));
+  assert.deepEqual(await automatic.decrypt(envelope, context), {
+    token: "synthetic",
+  });
+  await assert.rejects(
+    automatic.decrypt(envelope, { ...context, ownerId: "second" }),
+  );
+  for (const invalid of [
+    undefined,
+    "invalid",
+    "{}",
+    "null",
+    "[]",
+    '{"v1":"short"}',
+    JSON.stringify({ v1: secret, v2: secret }),
+  ])
+    assert.throws(
+      () => envelopesFromSecret(invalid),
+      (error: any) => error.code === "CONFIGURATION_REQUIRED",
+    );
+});
 
 test("AES-GCM binds owner, account, generation and record and supports key overlap", async () => {
   const old = b64(crypto.getRandomValues(new Uint8Array(32)));
@@ -233,7 +266,11 @@ test("API authorization precedes storage, with CSRF and disabled live operations
   assert.ok(!JSON.stringify(error).includes("sentinel-secret"));
   const pausedSocket = await applicationRoute(
     request("/api/auth/socket?generation=0", "synthetic-owner"),
-    { ...env, APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2" },
+    {
+      ...env,
+      APPLE_LOGIN_ENABLED: "false",
+      APPLE_CRYPTO_REVIEW_APPROVED: "device-proof-v2",
+    },
   );
   assert.equal(pausedSocket?.status, 422);
   const paused = (await pausedSocket!.json()) as {
@@ -252,11 +289,11 @@ test("API authorization precedes storage, with CSRF and disabled live operations
   );
   assert.equal(
     ((await oldApproval!.json()) as { enabled: boolean }).enabled,
-    false,
+    true,
   );
   const pausedDocument = await applicationRoute(
     request("/connect/apple", "synthetic-owner"),
-    env,
+    { ...env, APPLE_LOGIN_ENABLED: "false" },
   );
   assert.equal(pausedDocument?.status, 200);
   assert.ok(!(await pausedDocument!.text()).includes("<input"));

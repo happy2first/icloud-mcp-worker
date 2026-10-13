@@ -53,3 +53,9 @@ Calendar/CardDAV's internal version-checked delete method and Reminders internal
 - Production authorization is still unavailable (`wrangler whoami`: not authenticated), D1 ID is a placeholder, and no Apple credentials were supplied. Real authentication, all six actual reads/writes, ChatGPT Managed OAuth and phone browser verification remain pending.
 
 The detailed operator/user procedure is [USER-GUIDE.md](USER-GUIDE.md). Do not promise one-attempt success from private protocol code and synthetic tests alone.
+
+## 配置简化补充（2026-10-13）
+
+上述认证审查中的“30 天保留、显式 owner/origin、显式启用开关”是前一版本记录，已被本次用户授权的简化替代：只需 TEAM_DOMAIN、POLICY_AUD 和单密钥 Secret ENCRYPTION_KEYS_JSON。Apple 登录/Token 恢复默认开启，新登录本地永久保留；实际 HTTPS 请求域名和验证后的 Access JWT sub 自动组成每次请求的隔离上下文。旧密文兼容，旧限期会话需重新登录一次以取得永久保留同意。Access 策略仍限制本人，临时下载/PCS/操作租约及 Apple 自身有效期保持各自约束。
+
+已实际执行类型检查、123 项模拟测试、构建、本地 workerd 检查；新增长期保留、单密钥兼容、无手工 owner/origin 的身份隔离和跨来源拒绝测试。真实 Apple、Cloudflare 生产、手机布局仍未验收。对比了 yinxiang-mcp-worker-v2 的 src/security.ts 和 weixin-mcp-worker 的 src/main.ts、wrangler.jsonc；采用相同两个 Access 参数、验证后的 sub 隔离及 keep_vars 配置方式。

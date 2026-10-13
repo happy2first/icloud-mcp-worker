@@ -157,7 +157,9 @@ export function mountAdmin(
       ? "本地会话最晚到期：" +
         new Date(current.web.expiresAt).toLocaleString("zh-CN") +
         "；Apple 可能提前要求验证。"
-      : "";
+      : current.webSessionAvailable
+        ? "本地会话永久保留；Apple 仍可能要求重新验证。"
+        : "";
     el("dav-state").textContent = current.dav.configured
       ? "专用密码已加密保存。请分别检查日历与通讯录。"
       : "尚未保存 App 专用密码。";

@@ -5,6 +5,9 @@ export const APPLE_LOGIN_POLICY = "device-only-v2";
 export const LEGACY_SESSION_RETENTION_MS = 86_400_000;
 export const SESSION_RETENTION_MS = 2_592_000_000;
 export const RETENTION_POLICY = "absolute-30d-v1";
+// Numeric sentinel preserves bounded lease/download arithmetic in legacy code.
+// Version 4 never applies this value as a local session deadline; public expiry is null.
+export const NO_LOCAL_EXPIRY = 8_640_000_000_000_000;
 const timestamp = z.number().int().positive().safe().max(8_640_000_000_000_000);
 const evidence = {
   policy: z.literal(APPLE_LOGIN_POLICY),
@@ -62,13 +65,22 @@ export const RetainedLoginAssuranceSchema = z
     "Invalid session retention deadline.",
   );
 export const LoginAssuranceSchema = z.union([
+  z
+    .object({
+      ...evidence,
+      version: z.literal(4),
+      retentionPolicy: z.literal("until-disconnected-v1"),
+      retentionSource: z.literal("interactive-consent"),
+      expiresAt: z.literal(NO_LOCAL_EXPIRY),
+    })
+    .strict(),
   LegacyLoginAssuranceSchema,
   RetainedLoginAssuranceSchema,
 ]);
 export type LoginAssurance = z.infer<typeof LoginAssuranceSchema>;
 export function loginAssurance(
   now = Date.now(),
-  thirtyDays = true,
+  thirtyDays?: boolean,
 ): LoginAssurance {
   const common = {
     policy: APPLE_LOGIN_POLICY,
@@ -77,6 +89,14 @@ export function loginAssurance(
     consentAppleTrust: true,
     consentPersistentSession: true,
   } as const;
+  if (thirtyDays === undefined)
+    return {
+      ...common,
+      version: 4,
+      retentionPolicy: "until-disconnected-v1",
+      retentionSource: "interactive-consent",
+      expiresAt: NO_LOCAL_EXPIRY,
+    };
   return thirtyDays
     ? {
         ...common,
@@ -88,7 +108,10 @@ export function loginAssurance(
     : { ...common, version: 2, expiresAt: now + LEGACY_SESSION_RETENTION_MS };
 }
 export function requireCurrentLogin(login: LoginAssurance, now = Date.now()) {
-  if (login.verifiedAt > now + 5000 || now >= login.expiresAt)
+  if (
+    login.verifiedAt > now + 5000 ||
+    (login.version !== 4 && now >= login.expiresAt)
+  )
     throw new AppError(
       "AUTH_EXPIRED",
       "This connection's retained session has expired. Reconnect and verify your Apple device again.",

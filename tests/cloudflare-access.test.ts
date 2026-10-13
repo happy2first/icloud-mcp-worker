@@ -149,8 +149,57 @@ test("verified Access identity bootstraps an owner and replaces all caller-suppl
       return new Response("unexpected");
     },
   );
-  assert.equal(otherRoute.status, 403);
-  assert.equal(called, false);
+  assert.equal(otherRoute.status, 200);
+  assert.equal(called, true);
+});
+
+test("minimal Access config derives isolated identity and origin without trusting forwarded headers", async () => {
+  const { handle } = harness();
+  const minimal = { TEAM_DOMAIN: teamDomain, POLICY_AUD: audience };
+  const seen: string[] = [];
+  for (const sub of ["first-user", "second-user"]) {
+    const response = await handle(
+      request("/api/auth/config", await token({ sub }), {
+        "oai-authenticated-user-id": "forged-owner",
+        "x-forwarded-host": "evil.example.test",
+        "x-forwarded-proto": "http",
+      }),
+      minimal,
+      async (authenticated, runtime) => {
+        assert.equal(runtime.APP_ORIGIN, origin);
+        assert.equal(runtime.REMINDERS_OWNER_ID, sub);
+        assert.equal(
+          authenticated.headers.get("oai-authenticated-user-id"),
+          sub,
+        );
+        seen.push(runtime.REMINDERS_OWNER_ID!);
+        return applicationRoute(authenticated, runtime) as Promise<Response>;
+      },
+    );
+    assert.equal(response.status, 200);
+  }
+  assert.deepEqual(seen, ["first-user", "second-user"]);
+  assert.deepEqual(Object.keys(minimal).sort(), ["POLICY_AUD", "TEAM_DOMAIN"]);
+  const rejected = await handle(
+    request("/api/auth/config", await token(), {
+      origin: "https://evil.example.test",
+    }),
+    minimal,
+    async () => {
+      throw new Error("CSRF reached application");
+    },
+  );
+  assert.equal(rejected.status, 403);
+  const insecure = await handle(
+    new Request("http://private.example.test/admin", {
+      headers: { "cf-access-jwt-assertion": await token() },
+    }),
+    minimal,
+    async () => {
+      throw new Error("HTTP reached application");
+    },
+  );
+  assert.equal(insecure.status, 503);
 });
 
 test("only the configured owner reaches ordinary routes, and signed JWT claims are checked", async () => {

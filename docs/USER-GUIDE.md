@@ -20,20 +20,16 @@ cp wrangler.toml wrangler.local.toml
 routes = [{ pattern = "icloud.mcp.example.com", custom_domain = true }]
 ```
 
-将该行放在文件顶层（在 `[build]` / `[vars]` 之前）。示例域名没有被本项目创建。使用自己的 Cloudflare 域名，并设置以下 `[vars]`：
+将该行放在文件顶层（在 `[build]` 之前）。示例域名没有被本项目创建。使用自己的 Cloudflare 域名。只需在 Dashboard“变量和机密”添加以下两个普通变量，或者写入配置文件的 `[vars]`；仓库启用 `keep_vars=true`，部署会保留 Dashboard 普通变量：
 
 | 配置 | 内容 |
 |---|---|
-| APP_ORIGIN | `https://icloud.mcp.example.com`，不带结尾斜杠 |
 | TEAM_DOMAIN | 完整 Access 团队地址，例如 `https://your-team.cloudflareaccess.com` |
 | POLICY_AUD | 保护整个管理/MCP域名的 Access 应用 AUD |
-| REMINDERS_OWNER_ID | 本人的 Access JWT sub；旧名称保留，实际约束全部六项服务 |
-| APPLE_LOGIN_ENABLED | `true` |
-| APPLE_SESSION_RENEWAL_ENABLED | `saved-tokens-v1` |
-| APPLE_SESSION_RETENTION_WRITES | `absolute-30d-v1` |
-| ENCRYPTION_KEY_ID | `v1` |
 
-用本机生成 32 字节随机 AES 密钥，并将 JSON key ring 放入 **Workers Secret**：
+Apple 登录和会话恢复默认开启，新网页会话永久保留，无本地 30 天限制。上述四项 Apple/密钥编号变量无需填写；ENCRYPTION_KEY_ID 和保留期变量已不使用。可选地设置 APPLE_LOGIN_ENABLED=false / APPLE_SESSION_RENEWAL_ENABLED=false 暂停对应功能。
+
+用本机生成 32 字节随机 AES 密钥，并将包含唯一一把密钥的 JSON 放入 **Workers Secret**：
 
 ```bash
 openssl rand -base64 32
@@ -47,7 +43,7 @@ npx wrangler deploy --config wrangler.local.toml
 
 在 Cloudflare Zero Trust 中为整个自定义域名建立 Access 应用，只允许本人登录，记录其 AUD。为 MCP 客户端开启应用高级设置中的 **Managed OAuth**，参考 [Cloudflare 官方配置文档](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)。本项目不另建 OAuth 服务。保持 workers.dev 和 preview URL 关闭。若使用已有 Access 应用，核对域名、AUD和策略，不复制不相关应用的 AUD。
 
-首次不知道 owner sub 时，可先不填 REMINDERS_OWNER_ID，经 Access 登录后访问 `/api/bootstrap/identity`，把返回的 authenticatedUserId 填入本地配置，再部署。owner 未配置时，其余管理/MCP入口全部拒绝。普通页面和 Apple WebSocket `/api/auth/socket` 应使用相同 HTTPS 域名、Access 应用与 owner 身份；请勿用 Service Token 或 Bypass 策略替代本人身份。
+不需要 APP_ORIGIN 或 REMINDERS_OWNER_ID，也不需要先获取 sub 再部署。Worker 从实际 HTTPS 请求取得域名并检查同源；签名验证后的 Access JWT sub 自动隔离每个身份的凭证、会话、服务设置和下载。Access 策略仍应只允许本人，不能设成 Bypass；允许另一身份时，它只能管理自己的独立数据。旧两个变量如果还存在，会作为额外限制；不需要时删除即可。不要用 Service Token 代替本人登录。
 
 ### 1.1 Cloudflare Workers Builds：从 GitHub 部署
 
@@ -56,7 +52,7 @@ npx wrangler deploy --config wrangler.local.toml
 1. 在 Cloudflare Worker 的构建设置中选择 GitHub `main` 分支、仓库根目录；构建命令设为 `npm run build`，部署命令改为 **`npm run deploy:cloud`**。该命令先部署、再向同一个 DB 执行 `schema.sql`；只有两步都成功才算部署完成。首次建表完成前不能使用管理功能。
 2. 构建 API Token 必须具有对应账户的 Workers Scripts 编辑权限、D1 读取/编辑权限；自定义域名还需要对应域名/路由的部署权限。如自动配置报权限错误，在 Cloudflare 构建的 API Token 设置中补齐，或先手动创建 D1、把真实 ID 填入仓库配置。数据库 ID 不是密码，但不要虚构它。
 3. 若已有数据库名就是 `icloud-mcp-worker`，保持现有名称，Wrangler 会复用；若名称不同，先把 `database_name` 和真实 `database_id` 改成同一个现有数据库的信息。不要另建数据库代替已有存储，也不要删除已有数据库。没有任何数据库时才允许首次自动创建。
-4. 在仓库 `wrangler.toml` 顶层添加自己的 custom_domain 路由，在 `[vars]` 填写上表中的 APP_ORIGIN、TEAM_DOMAIN、POLICY_AUD，以及已知的 REMINDERS_OWNER_ID。不要只修改本地忽略文件；不要依赖仪表板中的同名普通变量覆盖 Wrangler 的配置。未知 owner 可按上节 bootstrap 步骤补齐并重新部署。
+4. 在 Worker 的域名设置中添加自己的自定义域名，或在仓库 `wrangler.toml` 顶层添加 custom_domain 路由。在 Dashboard 添加 TEAM_DOMAIN、POLICY_AUD 即可；不要只修改本地忽略文件，也不要在 Git 配置里重复写同名旧值覆盖 Dashboard 设置。
 5. 在 Worker 的“变量和机密”中把 `ENCRYPTION_KEYS_JSON` 添加为 **Secret**，使用上节生成的密钥 JSON。这是运行时机密，不应添加到 Git 文件或构建日志。已有密钥须保留，替换会使已有加密凭证无法解密。
 6. 点击部署最新提交。日志须同时显示 Worker 部署成功和远程 schema 执行成功。SQL 仅使用 `CREATE TABLE IF NOT EXISTS`，重复执行不会清空已有数据；它是当前初始结构，未来结构变更仍需独立迁移。
 
@@ -88,7 +84,7 @@ npx wrangler deploy --config wrangler.local.toml
 
 一次交互最多三分钟。手机切换应用、网络变化或浏览器进入后台可能中断 WebSocket，当前未做 iPhone 实机认证；出现连接失效时返回管理页先确认会话是否已保存，再决定重新登录。页面不会接收聊天中的密码或验证码，也没有浏览器扩展导入路径。
 
-本地会话最长保留 30 天，Token 恢复不会重置期限。Apple 仍可能提前撤销。状态读取失败时点“重新检查登录状态”；若 Access 已过期，重新打开管理页完成 Access 登录。
+新网页会话在本地永久保留，直到主动断开或确认 Apple 拒绝该账户会话；不再设置人为到期时间。Apple 自身的 Cookie/Token 有效期及 PCS 授权仍由 Apple 决定，永久保存不代表永久可用。旧版本保存的 1/30 天会话可以继续解密，重新登录一次才采用永久策略，不改写旧认证证据。状态读取失败时点“重新检查登录状态”；若 Access 已过期，重新打开管理页完成 Access 登录。登录交互、PCS 检查、分页游标及临时下载链接仍有自己的短期时限。
 
 ## 5. 分别申请 PCS 并开启四项网页服务
 
