@@ -25,12 +25,26 @@ export const xml = (s: string) =>
         "'": "&apos;",
       })[c]!,
   );
+// With attributes enabled, <href xmlns="DAV:">...</href> is an object,
+// while <d:href>...</d:href> is a string. Never stringify it as [object Object].
+function hrefText(value: unknown): string {
+  const text = typeof value === "string" ? value :
+    value && typeof value === "object" && "#text" in value ? (value as any)["#text"] : undefined;
+  if (typeof text !== "string" || !text.trim())
+    throw new AppError("PROTOCOL_CHANGED", "DAV response omitted a valid resource href.");
+  return text.trim();
+}
 export function davURL(value: string, kind: DavKind) {
-  const u = new URL(value);
+  let u: URL;
+  try {
+    u = new URL(value.trim());
+  } catch {
+    throw new AppError("VALIDATION_ERROR", "DAV resource address is malformed.");
+  }
   const host =
     kind === "calendar"
-      ? /^(?:caldav|p\d{1,3}-caldav)\.icloud\.com$/
-      : /^(?:contacts|p\d{1,3}-contacts)\.icloud\.com$/;
+      ? /^(?:caldav|p\d{1,3}-caldav)\.icloud\.com(?:\.cn)?$/
+      : /^(?:contacts|p\d{1,3}-contacts)\.icloud\.com(?:\.cn)?$/;
   if (
     u.protocol !== "https:" ||
     u.username ||
@@ -42,7 +56,7 @@ export function davURL(value: string, kind: DavKind) {
   )
     throw new AppError(
       "VALIDATION_ERROR",
-      "Use an Apple DAV resource returned by discovery.",
+      "DAV resource rejected: expected this service's Apple HTTPS endpoint in icloud.com or icloud.com.cn, without credentials, a nonstandard port, query or fragment.",
     );
   return u;
 }
@@ -67,7 +81,7 @@ export function parseMulti(text: string) {
       "Apple omitted DAV multistatus records.",
     );
   return (v.multistatus?.response ?? []).map((r: any) => ({
-    href: String(r.href ?? ""),
+    href: hrefText(r.href),
     props: Object.assign(
       {},
       ...(r.propstat ?? [])
@@ -81,6 +95,7 @@ export class DavClient {
     readonly kind: DavKind,
     readonly credentials: { account: string; password: string },
     readonly send: typeof fetch = fetch,
+    readonly signal?: AbortSignal,
   ) {}
   static async for(env: RuntimeEnv, owner: string, kind: DavKind) {
     return new DavClient(kind, await loadCredentials(env, owner));
@@ -101,9 +116,15 @@ export class DavClient {
           ),
         ),
       );
-    const signal = AbortSignal.timeout(10000);
+    const signal = this.signal
+      ? AbortSignal.any([this.signal, AbortSignal.timeout(10000)])
+      : AbortSignal.timeout(10000);
+    const visited = new Set<string>();
     try {
       for (let hop = 0; hop < 4; hop++) {
+        if (visited.has(url.href))
+          throw new AppError("APPLE_REDIRECT_ERROR", `DAV ${this.kind} ${method}: redirect loop.`, 409);
+        visited.add(url.href);
         const r = await this.send.call(globalThis, url, {
           method,
           body,
@@ -125,8 +146,8 @@ export class DavClient {
           await r.body?.cancel();
           if (!location || hop === 3)
             throw new AppError(
-              "PROTOCOL_CHANGED",
-              "DAV redirect budget exceeded.",
+              "APPLE_REDIRECT_ERROR",
+              `DAV ${this.kind} ${method}: ${!location ? "redirect omitted Location" : "redirect limit exceeded"} (HTTP ${r.status}).`,
             );
           url = davURL(new URL(location, url).href, this.kind);
           continue;
@@ -134,7 +155,7 @@ export class DavClient {
         if (r.status === 401)
           throw new AppError(
             "REAUTH_REQUIRED",
-            "App-specific password rejected. Replace it in /admin.",
+            `DAV ${this.kind} ${method}: Apple rejected the app-specific password (HTTP 401). Check the Apple account and password in /admin.`,
             409,
           );
         if (r.status === 403)
@@ -158,7 +179,7 @@ export class DavClient {
             );
           throw new AppError(
             "UPSTREAM_UNAVAILABLE",
-            "Apple DAV request failed.",
+            `DAV ${this.kind} ${method}: Apple returned HTTP ${r.status}.`,
             503,
             true,
           );
@@ -179,7 +200,7 @@ export class DavClient {
           : "UPSTREAM_UNAVAILABLE",
         method === "PUT" || method === "DELETE"
           ? "Write outcome unknown. Read the exact resource before retrying."
-          : "DAV timeout. Retry later.",
+          : `DAV ${this.kind} ${method}: ${signal.aborted ? "request budget exceeded" : "network connection failed"}. Retry later.`,
         503,
       );
     }
@@ -197,30 +218,45 @@ export class DavClient {
     }));
   }
   async discover() {
+    // Bound all discovery stages, including the one read-only regional fallback.
+    const signal = this.signal
+      ? AbortSignal.any([this.signal, AbortSignal.timeout(40000)])
+      : AbortSignal.timeout(40000);
+    return new DavClient(this.kind, this.credentials, this.send, signal).discoverWithinBudget();
+  }
+  private async discoverWithinBudget() {
     const root =
       this.kind === "calendar"
         ? "https://caldav.icloud.com/"
         : "https://contacts.icloud.com/";
-    const principal = await this.propfind(root, "<d:current-user-principal/>");
-    const href = principal[0]?.props["current-user-principal"]?.href;
+    let principal;
+    try {
+      principal = await this.propfind(root, "<d:current-user-principal/>");
+    } catch (e) {
+      // Chinese CardDAV accounts may require the regional bootstrap directly.
+      // Do not retry writes, protocol errors, rate limits or arbitrary endpoints.
+      if (!(e instanceof AppError) || !["REAUTH_REQUIRED", "FORBIDDEN", "UPSTREAM_UNAVAILABLE"].includes(e.code) || this.signal?.aborted) throw e;
+      principal = await this.propfind(root.replace(".com/", ".com.cn/"), "<d:current-user-principal/>");
+    }
+    const principalRecord = principal.find((x: any) => x.props["current-user-principal"]?.href);
+    const href = principalRecord?.props["current-user-principal"]?.href;
     if (!href)
       throw new AppError("PROTOCOL_CHANGED", "Apple omitted DAV principal.");
     const home = await this.propfind(
-      new URL(href, principal[0].href).href,
+      new URL(hrefText(href), principalRecord.href).href,
       this.kind === "calendar"
         ? "<c:calendar-home-set/>"
         : "<a:addressbook-home-set/>",
     );
-    const h =
-      home[0]?.props[
-        this.kind === "calendar" ? "calendar-home-set" : "addressbook-home-set"
-      ]?.href;
+    const homeProperty = this.kind === "calendar" ? "calendar-home-set" : "addressbook-home-set";
+    const homeRecord = home.find((x: any) => x.props[homeProperty]?.href);
+    const h = homeRecord?.props[homeProperty]?.href;
     if (!h)
       throw new AppError(
         "PROTOCOL_CHANGED",
         "Apple omitted DAV home collection.",
       );
-    const resolved = new URL(h, home[0].href).href;
+    const resolved = new URL(hrefText(h), homeRecord.href).href;
     const collections = await this.propfind(
       resolved,
       "<d:displayname/><d:resourcetype/>",
@@ -474,3 +510,4 @@ export function updateDavData(kind: DavKind, text: string, changes: any) {
   }
   return foldLines(output);
 }
+

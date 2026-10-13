@@ -124,3 +124,5 @@ npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 暂不支持朋友位置、AirTag、丢失模式或抹除。请求内处理 serverContext，不保存位置，不常驻轮询。Apple 非公开协议可能变化。
 
 **验收：新增模拟测试、现有回归测试及本地 workerd 的 Access → MCP → 加密会话 → 模拟 Apple HTTP 链路已通过；尚未用真实 Apple 账户验证，也未触发真实设备响铃。** 上游依据和详细记录见 [Find My 验证记录](docs/FINDMY-VALIDATION.md)。部署后先调用设备列表，再用返回 ID 查询位置；响铃须另行明确确认。
+
+DAV 日历及通讯录的服务发现修复、地区地址白名单与模拟验证范围见 [DAV 修复记录](docs/DAV-FIX.md)。

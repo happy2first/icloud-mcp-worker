@@ -132,6 +132,9 @@ export function mountAdmin(
             : e.code === "UPSTREAM_UNAVAILABLE" && path === "/api/admin/status"
               ? "管理状态读取失败；此接口不请求 Apple，请记录请求编号并检查 Worker 数据库。"
               : (hints[e.code] ?? e.message ?? "操作未完成。")) +
+          (typeof e.message === "string" && e.message.startsWith("DAV ")
+            ? " 详情：" + e.message
+            : "") +
           (typeof e.requestId === "string" &&
           /^[a-f0-9-]{36}$/.test(e.requestId)
             ? " 请求编号：" + e.requestId + "。"
@@ -441,3 +444,4 @@ export function mountAdmin(
     },
   };
 }
+
