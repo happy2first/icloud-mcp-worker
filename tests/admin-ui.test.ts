@@ -542,3 +542,64 @@ test("success toast expires automatically", async (t) => {
     t.mock.timers.reset();
   }
 });
+
+test("Find My errors distinguish web credentials from App passwords and explain sound confirmation", async () => {
+  const h = await setup();
+  try {
+    await h.settle();
+    h.state.services.find((s) => s.service === "findmy")!.connection = {
+      state: "error",
+      checkedAt: Date.now(),
+      error: {
+        code: "REAUTH_REQUIRED",
+        message: "Apple fmip initClient: HTTP 421",
+        requestId: "findmy-request",
+      },
+    };
+    h.el("refresh").click();
+    await h.settle();
+    const card = h.document.querySelector('article[data-service="findmy"]')!;
+    assert.ok(!card.textContent.includes("专用密码"));
+    assert.ok(card.textContent.includes("Apple 网页会话"));
+    assert.ok(card.textContent.includes("通过 MCP 播放声音"));
+    assert.ok(card.textContent.includes("HTTP 421"));
+  } finally {
+    h.ui.destroy();
+  }
+});
+
+test("persisted service errors keep one detailed copy instead of a duplicate inline box", async () => {
+  const state = base();
+  const error = {
+    code: "REAUTH_REQUIRED",
+    message: "Apple fmip initClient (cn): HTTP 421",
+    requestId: "deduplicated-request",
+  };
+  state.services.find((s) => s.service === "findmy")!.connection = {
+    state: "error",
+    checkedAt: Date.now(),
+    error,
+  };
+  const h = await setup((async (path: any) =>
+    path === "/api/admin/status"
+      ? Response.json(state)
+      : Response.json({ error }, { status: 409 })) as typeof fetch);
+  try {
+    await h.settle();
+    (
+      h.document.querySelector(
+        'button[data-service="findmy"][data-kind="check"]',
+      ) as any
+    ).click();
+    await h.settle();
+    const card = h.document.querySelector('article[data-service="findmy"]')!;
+    assert.equal((card.querySelector(".operation-result") as any).hidden, true);
+    h.el("dismiss-result").click();
+    (card.querySelector("details button") as any).click();
+    await Promise.resolve();
+    assert.ok(h.copied[0].includes("deduplicated-request"));
+    assert.ok(h.copied[0].includes("HTTP 421"));
+  } finally {
+    h.ui.destroy();
+  }
+});

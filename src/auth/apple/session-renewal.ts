@@ -163,6 +163,7 @@ export class AppleSessionRenewal {
     expectedGeneration: number,
     budget: AppleRequestBudget,
     force = false,
+    exchangeSavedToken = false,
   ) {
     let saved = await this.repository.load();
     if (saved.fence.generation !== expectedGeneration)
@@ -238,9 +239,23 @@ export class AppleSessionRenewal {
         let connection;
         let exchanged = false;
         try {
-          connection = await http.validateSession(
-            saved.session.connection.dsid,
-          );
+          if (exchangeSavedToken) {
+            // Find My can reject its cookies while /validate still succeeds.
+            // A read-only service recovery must actually refresh the web login.
+            if (!http.value("X-Apple-Session-Token"))
+              throw new AppError(
+                "REAUTH_REQUIRED",
+                "Find My recovery: no saved session token is available. Web credentials preserved; sign in again to restore this service.",
+                409,
+              );
+            budget.recoveryUsed = true;
+            connection = await http.accountLogin(saved.session.connection.dsid);
+            exchanged = true;
+          } else {
+            connection = await http.validateSession(
+              saved.session.connection.dsid,
+            );
+          }
         } catch (error) {
           if (!(error instanceof AppleAuthenticationError) || error.confirmed)
             throw error;

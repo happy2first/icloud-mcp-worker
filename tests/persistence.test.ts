@@ -25,6 +25,7 @@ import {
 import { encodeDocument } from "../src/reminders/crdt.ts";
 import { b64 } from "../src/crypto/bytes.ts";
 import { webOperation } from "../src/services/web.ts";
+import { findMyOperation } from "../src/services/findmy.ts";
 import { ensureStorage } from "../src/persistence/initialize.ts";
 
 import { checkScopes, savedChecks, saveCheck } from "../src/services/checks.ts";
@@ -374,6 +375,109 @@ const acceptedAccount = (
 });
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof AppError && error.code === code;
+
+for (const mode of [
+  "recovered",
+  "still-rejected",
+  "no-replay",
+  "no-token",
+] as const) {
+  test(`mainland Find My service-cookie recovery: ${mode}`, async () => {
+    const db = new SQLiteD1(),
+      env = testEnv(db, key());
+    const repo = new AppleSessionRepository(env, owner);
+    const original = appleSession();
+    original.auth.region = "cn";
+    original.auth.cookies[0].domain = "icloud.com.cn";
+    original.connection.services = {
+      fmip: "https://p123-fmipweb.icloud.com.cn",
+    };
+    original.renewal = { ...renewalCheckpoint(), lastValidatedAt: Date.now() };
+    if (mode === "no-token") original.auth.headers = {};
+    const fence = await repo.begin(0);
+    await repo.commit(fence, original, "READY");
+    const nativeFetch = globalThis.fetch;
+    const calls: string[] = [];
+    let reads = 0;
+    globalThis.fetch = async (value, init) => {
+      const url = new URL(String(value));
+      calls.push(url.pathname);
+      if (url.pathname.endsWith("/accountLogin")) {
+        assert.equal(url.hostname, "setup.icloud.com.cn");
+        assert.equal(
+          JSON.parse(String(init?.body)).dsWebAuthToken,
+          "header-session-secret",
+        );
+        return new Response(
+          JSON.stringify({
+            ...acceptedAccount("123456789", "p123-ckdatabasews.icloud.com.cn"),
+            webservices: {
+              ckdatabasews: { url: "https://p123-ckdatabasews.icloud.com.cn" },
+              findme: { url: "https://p123-fmipweb.icloud.com.cn" },
+            },
+          }),
+          {
+            headers: {
+              "set-cookie":
+                "X-APPLE-WEBAUTH-TOKEN=refreshed; Domain=.icloud.com.cn; Path=/; Secure",
+            },
+          },
+        );
+      }
+      assert.ok(url.pathname.endsWith("/initClient"));
+      assert.equal(url.hostname, "p123-fmipweb.icloud.com.cn");
+      assert.equal(
+        new Headers(init?.headers).get("origin"),
+        "https://www.icloud.com.cn",
+      );
+      if (++reads === 1 || mode !== "recovered")
+        return new Response("{}", { status: 421 });
+      assert.match(
+        new Headers(init?.headers).get("cookie") ?? "",
+        /TOKEN=refreshed/,
+      );
+      return Response.json({
+        serverContext: {},
+        userInfo: { hasMembers: false },
+        content: [],
+      });
+    };
+    try {
+      const run = () =>
+        findMyOperation(env, owner, (c) => c.list(), mode !== "no-replay");
+      if (mode === "recovered") await run();
+      else
+        await assert.rejects(
+          run(),
+          (e: any) =>
+            e.code === "REAUTH_REQUIRED" &&
+            (mode === "no-token"
+              ? e.message.includes("no saved session token")
+              : e.message.includes("HTTP 421")),
+        );
+      assert.deepEqual(
+        calls,
+        mode === "recovered" || mode === "still-rejected"
+          ? [
+              "/fmipservice/client/web/initClient",
+              "/setup/ws/1/accountLogin",
+              "/fmipservice/client/web/initClient",
+            ]
+          : ["/fmipservice/client/web/initClient"],
+      );
+      const saved = await repo.load();
+      assert.equal(saved.fence.generation, fence.generation);
+      assert.deepEqual(saved.session.login, original.login);
+      if (mode === "still-rejected") {
+        await assert.rejects(run(), hasCode("UPSTREAM_UNAVAILABLE"));
+        assert.equal(calls.length, 3);
+      }
+    } finally {
+      globalThis.fetch = nativeFetch;
+      db.sqlite.close();
+    }
+  });
+}
 
 test("legacy and retained assurance variants stay strict and separate authentication from retention", () => {
   const now = Date.parse("2026-10-09T19:25:12.131Z");

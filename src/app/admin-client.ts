@@ -114,12 +114,18 @@ export function mountAdmin(
   let workingService: string | null = null;
   const copyIcon =
     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg>';
-  const errorText = (e: any) =>
+  const errorHint = (code: string, service?: string) =>
+    code === "REAUTH_REQUIRED" &&
+    service &&
+    !["calendar", "contacts"].includes(service)
+      ? "该服务拒绝了 Apple 网页会话，请查看错误详情。"
+      : (hints[code] ?? "操作未完成。");
+  const errorText = (e: any, service?: string) =>
     (e.code ?? "REQUEST_FAILED") +
     "：" +
     (e.code === "CONFIGURATION_REQUIRED"
       ? (configurationHints[e.message] ?? hints.CONFIGURATION_REQUIRED)
-      : (hints[e.code] ?? "操作未完成。")) +
+      : errorHint(e.code, service)) +
     (typeof e.message === "string" ? "\n详情：" + e.message : "") +
     (typeof e.requestId === "string" ? "\n请求编号：" + e.requestId : "") +
     (typeof e.retryAfterSeconds === "number"
@@ -158,7 +164,21 @@ export function mountAdmin(
       renderResult(el(scope + "-result"), results.get(scope));
     for (const card of doc.querySelectorAll<HTMLElement>(".service-card")) {
       const target = card.querySelector<HTMLElement>(".operation-result");
-      if (target) renderResult(target, results.get(card.dataset.service!));
+      const service = card.dataset.service!;
+      const result = results.get(service);
+      const savedError = current?.services.find((s) => s.service === service)
+        ?.connection?.error;
+      // A persisted connection error already has details and its own copy
+      // button. Keep local feedback only when it adds a different result.
+      if (target)
+        renderResult(
+          target,
+          result?.error &&
+            savedError &&
+            result.text === errorText(savedError, service)
+            ? undefined
+            : result,
+        );
     }
   }
   async function copy(text: string, button: HTMLButtonElement) {
@@ -216,7 +236,9 @@ export function mountAdmin(
       if (e.code === "UPSTREAM_UNAVAILABLE" && path === "/api/admin/status")
         e.message =
           "管理状态读取失败；此接口不请求 Apple，请检查 Worker 数据库。";
-      throw new Error(errorText(e));
+      throw new Error(
+        errorText(e, (value as { service?: string } | undefined)?.service),
+      );
     }
     return data;
   }
@@ -381,14 +403,14 @@ export function mountAdmin(
       }
       if (c?.error) {
         const help = doc.createElement("p");
-        help.textContent = hints[c.error.code] ?? "请查看错误详情。";
+        help.textContent = errorHint(c.error.code, s.service);
         card.appendChild(help);
         const details = doc.createElement("details");
         const summary = doc.createElement("summary");
         summary.textContent = "错误详情";
         details.appendChild(summary);
         const pre = doc.createElement("pre");
-        pre.textContent = errorText(c.error);
+        pre.textContent = errorText(c.error, s.service);
         details.appendChild(pre);
         const button = doc.createElement("button");
         button.className = "icon-button";
@@ -407,7 +429,8 @@ export function mountAdmin(
         toggle("writable");
       if (s.service === "findmy") {
         const p = doc.createElement("small");
-        p.textContent = "本人及家庭设备；播放声音需确认";
+        p.textContent =
+          "本人及家庭设备；支持通过 MCP 播放声音，执行前需你确认目标设备";
         card.appendChild(p);
       }
       const actions = doc.createElement("div");

@@ -119,7 +119,12 @@ export async function webOperation<T>(
           : env.APPLE_SESSION_RENEWAL_ENABLED !== "false")
       ) {
         await repo.releaseResume(fence);
-        await renewal.ensure(initial.fence.generation, budget, true);
+        await renewal.ensure(
+          initial.fence.generation,
+          budget,
+          true,
+          service === "fmip",
+        );
         if (approve)
           throw new AppError(
             "RESTART_REQUIRED",
@@ -176,6 +181,19 @@ export async function webOperation<T>(
           saved.action ?? undefined,
         );
       }
+      if (
+        service === "fmip" &&
+        e instanceof AppError &&
+        e.code === "REAUTH_REQUIRED"
+      )
+        throw new AppError(
+          "REAUTH_REQUIRED",
+          e.message +
+            (budget.recoveryUsed
+              ? " Find My still rejected the service session after one saved-token exchange. No further automatic retry; other service credentials were not removed."
+              : " Find My session rejected; no automatic replay was performed. This does not establish that other iCloud services are disconnected."),
+          409,
+        );
       throw e;
     } finally {
       await repo.releaseResume(fence);
@@ -240,7 +258,7 @@ export class WebClient {
     if ([401, 421, 450].includes(r.status))
       throw new AppError(
         "REAUTH_REQUIRED",
-        "Apple session rejected. Reconnect in /admin.",
+        `Apple ${service} ${url.pathname} (${this.auth.region}; host=${url.hostname}): HTTP ${r.status}; service session rejected.`,
         409,
       );
     if (r.status === 429)
@@ -277,7 +295,7 @@ export class WebClient {
       if (["401", "421", "450"].includes(status))
         throw new AppError(
           "REAUTH_REQUIRED",
-          "Find My rejected the Apple session. Reconnect in /admin if bounded recovery cannot renew it.",
+          `Apple fmip ${url.pathname} (${this.auth.region}; host=${url.hostname}): HTTP ${r.status}; statusCode=${status}; service session rejected.`,
           409,
         );
       if (status === "403")
