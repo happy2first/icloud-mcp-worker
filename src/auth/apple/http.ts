@@ -584,7 +584,7 @@ export class AppleAuthHTTP {
     if (body?.hsaChallengeRequired === true || body?.hsaTrustedBrowser !== true)
       throw new AppError(
         "VERIFICATION_REQUIRED",
-        "Apple has not confirmed a trusted session. Restart device verification.",
+        `Apple account-login: trusted session not confirmed (HTTP ${reply.status}; hsaTrustedBrowser=${safeFlag(body?.hsaTrustedBrowser)}; hsaChallengeRequired=${safeFlag(body?.hsaChallengeRequired)}; dsInfo=${!!object(body?.dsInfo)}; webservices=${!!object(body?.webservices)}; domainToUse=${safeRegion(body?.domainToUse)}). No session was saved.`,
         409,
       );
     const dsInfo = object(body?.dsInfo);
@@ -634,4 +634,22 @@ export class AppleAuthHTTP {
       clientMasteringNumber: CLIENT_MASTERING,
     };
   }
+}
+
+// Diagnostic values are closed sets: never echo Apple body strings, IDs or tokens.
+function safeFlag(value: unknown): string {
+  return value === true
+    ? "true"
+    : value === false
+      ? "false"
+      : value === undefined
+        ? "missing"
+        : "invalid";
+}
+function safeRegion(value: unknown): string {
+  return value === "icloud.com.cn" || value === "icloud.com"
+    ? value
+    : value === undefined
+      ? "missing"
+      : "other";
 }

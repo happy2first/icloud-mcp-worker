@@ -685,6 +685,38 @@ test("Location-less accountLogin 302 cannot save empty, untrusted or incomplete 
   }
 });
 
+test("account trust diagnostics distinguish missing flags without exposing Apple body values", async () => {
+  const h = bridgeHarness({
+    account: {
+      status: 302,
+      body: {
+        domainToUse: "icloud.com.cn",
+        dsInfo: { dsid: "private-sentinel" },
+        secret: "private-sentinel",
+        webservices: {},
+      },
+    },
+  });
+  await bridgeUntilValidation(h.flow);
+  await assert.rejects(
+    h.flow.advance({
+      type: "bridge-validation",
+      ...binding,
+      sequence: 4,
+      code: fixtures.bridge.plaintext,
+    }),
+    (e: any) => {
+      assert.equal(e.code, "VERIFICATION_REQUIRED");
+      assert.match(e.message, /hsaTrustedBrowser=missing/);
+      assert.match(e.message, /hsaChallengeRequired=missing/);
+      assert.match(e.message, /domainToUse=icloud.com.cn/);
+      assert.ok(!e.message.includes("private-sentinel"));
+      return true;
+    },
+  );
+  assert.equal(h.saved(), null);
+});
+
 test("missing browser-trust redirect destination never saves a verified-device session as logged in", async () => {
   const h = bridgeHarness({ trust: [{ status: 302 }] });
   await bridgeUntilValidation(h.flow);
