@@ -82,7 +82,8 @@ export async function serviceStatus(env: RuntimeEnv, owner: string) {
                 : c.service === "reminders"
                   ? web.state === "READY"
                   : null,
-        realAppleValidated: false,
+        realAppleValidated:
+          c.service === "photos" && connections.photos?.state === "ok",
       })),
       {
         service: "findmy",

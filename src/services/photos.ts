@@ -1,6 +1,14 @@
 import { WebClient, field, wrappedText } from "./web.ts";
 import { AppError } from "../errors.ts";
 const zone = { zoneName: "PrimarySync", zoneType: "REGULAR_CUSTOM_ZONE" };
+const summaryKeys = [
+  "masterRef",
+  "filenameEnc",
+  "assetDate",
+  "resOriginalWidth",
+  "resOriginalHeight",
+  "resOriginalFileType",
+];
 const filter = (name: string, value: string | number) => ({
   fieldName: name,
   comparator: "EQUALS",
@@ -61,43 +69,97 @@ export class PhotosClient {
       complete: !r.continuationMarker,
     };
   }
-  async query(limit: number, offset: number, albumId?: string, id?: string) {
-    const r = await this.web.ck("photos", "records/query", {
-      zoneID: zone,
-      query: {
-        recordType: albumId
-          ? "CPLContainerRelationLiveByAssetDate"
-          : "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted",
-        filterBy: [
-          filter("direction", "ASCENDING"),
-          filter("startRank", offset),
-          ...(albumId ? [filter("parentId", albumId)] : []),
-          ...(id ? [filter("recordName", id)] : []),
-        ],
-      },
-      resultsLimit: limit * 2,
-    });
+  async query(limit: number, offset: number, albumId?: string) {
+    // Return a bounded page even when the caller asks for 100. nextOffset is
+    // based on the actual assets returned, never the requested page size.
+    let pageSize = Math.min(limit, 20);
+    let r: any;
+    for (;;) {
+      try {
+        r = await this.web.ck("photos", "records/query", {
+          zoneID: zone,
+          desiredKeys: summaryKeys,
+          query: {
+            recordType: albumId
+              ? "CPLContainerRelationLiveByAssetDate"
+              : "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted",
+            filterBy: [
+              filter("direction", "ASCENDING"),
+              filter("startRank", offset),
+              ...(albumId ? [filter("parentId", albumId)] : []),
+            ],
+          },
+          resultsLimit: pageSize * 2,
+        });
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof AppError) ||
+          error.code !== "PROTOCOL_CHANGED" ||
+          error.message !== "The Apple response exceeded the byte budget." ||
+          pageSize <= 1
+        )
+          throw error;
+        pageSize = Math.max(1, Math.floor(pageSize / 2));
+      }
+    }
     if (!Array.isArray(r.records))
       throw new AppError("PROTOCOL_CHANGED", "Apple omitted photos.");
     const pairs = photoPairs(r.records);
     return {
       pairs,
       records: pairs.map(photoSummary),
-      nextOffset: pairs.length >= limit ? offset + pairs.length : null,
-      complete: pairs.length < limit,
+      nextOffset: pairs.length >= pageSize ? offset + pairs.length : null,
+      complete: pairs.length < pageSize,
       pagination: "live-index-offset",
     };
   }
   async get(id: string) {
-    const r = await this.query(2, 0, undefined, id);
-    const pair = r.pairs.find((x) => x.asset.recordName === id);
-    if (!pair)
+    // A rank index is for pagination, not exact record lookup. In particular,
+    // a recordName filter on that index may be ignored by Apple.
+    const r = await this.web.ck("photos", "records/lookup", {
+      zoneID: zone,
+      records: [{ recordName: id }],
+      desiredKeys: [...summaryKeys, "resJPEGThumbRes", "resOriginalRes"],
+    });
+    const asset = r.records?.find((x: any) => x.recordName === id);
+    if (!asset || asset.deleted)
       throw new AppError(
         "CONFLICT",
-        "Photo missing from the supported library index.",
+        "Requested photo is missing or deleted. Refresh the listing.",
         409,
       );
-    return pair;
+    if (asset.recordType !== "CPLAsset")
+      throw new AppError(
+        "PROTOCOL_CHANGED",
+        "Apple did not return a photo asset.",
+      );
+    const masterId = field(asset, "masterRef")?.recordName;
+    if (typeof masterId !== "string" || !masterId)
+      throw new AppError(
+        "PROTOCOL_CHANGED",
+        "Apple omitted the photo master reference.",
+      );
+    let master = r.records?.find(
+      (x: any) => x.recordName === masterId && x.recordType === "CPLMaster",
+    );
+    if (!master) {
+      const m = await this.web.ck("photos", "records/lookup", {
+        zoneID: zone,
+        records: [{ recordName: masterId }],
+        desiredKeys: [...summaryKeys, "resJPEGThumbRes", "resOriginalRes"],
+      });
+      master = m.records?.find(
+        (x: any) => x.recordName === masterId && x.recordType === "CPLMaster",
+      );
+    }
+    if (!master || master.deleted)
+      throw new AppError(
+        "CONFLICT",
+        "Requested photo master is missing or deleted. Refresh the listing.",
+        409,
+      );
+    return { asset, master };
   }
   async asset(id: string, variant: "thumb" | "original") {
     const pair = await this.get(id);

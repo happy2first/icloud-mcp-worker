@@ -14,6 +14,7 @@ import {
   updateDavData,
 } from "../services/dav.ts";
 import { webOperation } from "../services/web.ts";
+import { saveCheck } from "../services/checks.ts";
 import { findMyOperation } from "../services/findmy.ts";
 import { NotesClient } from "../services/notes.ts";
 import { PhotosClient } from "../services/photos.ts";
@@ -391,8 +392,19 @@ export function registerServices(
     notes((n, a) => n.get(a.id)),
     "Read and decode plain text Notes Protobuf. Locked notes, attachment rendering and complex tables are unsupported.",
   );
-  const photos = (fn: (p: PhotosClient, a: any) => Promise<any>) => (a: any) =>
-    webOperation(env, owner, "photos", (w) => fn(new PhotosClient(w), a));
+  const photos =
+    (fn: (p: PhotosClient, a: any) => Promise<any>) => async (a: any) => {
+      let scope: string | null = null;
+      const result = await webOperation(env, owner, "photos", async (w) => {
+        scope = `${w.generation}:${w.session.login.verifiedAt}`;
+        return fn(new PhotosClient(w), a);
+      });
+      await saveCheck(env, owner, "photos", scope, {
+        state: "ok",
+        checkedAt: Date.now(),
+      });
+      return result;
+    };
   register(
     "photos_albums",
     "photos",

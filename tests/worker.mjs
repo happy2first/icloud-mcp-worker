@@ -54,6 +54,50 @@ const mf = new Miniflare({
       return new Response("synthetic-file", {
         headers: { "content-type": "text/plain" },
       });
+    if (u.hostname === "thumbnail.icloud-content.com")
+      return new Response(new Uint8Array([255, 216, 255, 224]), {
+        headers: { "content-type": "image/jpeg" },
+      });
+    if (
+      u.hostname === "p01-ckdatabasews.icloud.com" &&
+      u.pathname.includes("com.apple.photos.cloud")
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const p = JSON.parse(calls.at(-1).body);
+      const photo = {
+        recordName: "deep-photo",
+        recordType: "CPLAsset",
+        recordChangeTag: "v1",
+        fields: { masterRef: { value: { recordName: "deep-master" } } },
+      };
+      const master = {
+        recordName: "deep-master",
+        recordType: "CPLMaster",
+        fields: {
+          filenameEnc: { value: btoa("IMG_4514.HEIC") },
+          resJPEGThumbRes: {
+            value: {
+              downloadURL: "https://thumbnail.icloud-content.com/a",
+              size: 4,
+            },
+          },
+          resOriginalRes: {
+            value: {
+              downloadURL: "https://asset.icloud-content.com/a",
+              size: 14,
+            },
+          },
+        },
+      };
+      if (u.pathname.endsWith("/records/lookup"))
+        return Response.json({
+          records: [p.records[0].recordName === "deep-photo" ? photo : master],
+        });
+      if (p.query.recordType === "CPLAlbumByPositionLive")
+        return Response.json({ records: [] });
+      assert.ok(p.resultsLimit <= 40);
+      return Response.json({ records: [photo, master] });
+    }
     if (u.hostname === "p12-fmipweb.icloud.com") {
       if (findMyRequiresSignIn)
         return Response.json({ statusCode: "450" }, { status: 450 });
@@ -547,6 +591,49 @@ try {
     enabled: true,
     writable: false,
   });
+  const concurrentPhotos = await Promise.all([
+    mcp("tools/call", { name: "photos_albums", arguments: { limit: 3 } }),
+    mcp("tools/call", {
+      name: "photos_query",
+      arguments: { limit: 100, offset: 9200 },
+    }),
+  ]);
+  for (const response of concurrentPhotos)
+    assert.equal(response.result.isError, undefined, JSON.stringify(response));
+  assert.equal(
+    concurrentPhotos[1].result.structuredContent.records[0].id,
+    "deep-photo",
+  );
+  const deepPhoto = await mcp("tools/call", {
+    name: "photos_get",
+    arguments: { id: "deep-photo" },
+  });
+  assert.equal(deepPhoto.result.structuredContent.filename, "IMG_4514.HEIC");
+  const thumb = await mcp("tools/call", {
+    name: "photos_thumbnail",
+    arguments: { id: "deep-photo" },
+  });
+  assert.equal(thumb.result.content[0].type, "image", JSON.stringify(thumb));
+  assert.equal(thumb.result.content[0].mimeType, "image/jpeg");
+  const photoDownload = await mcp("tools/call", {
+    name: "photos_download",
+    arguments: { id: "deep-photo", variant: "original" },
+  });
+  assert.ok(
+    photoDownload.result.structuredContent.resourceUri.startsWith(
+      "icloud-file://",
+    ),
+  );
+  const photoStatus = await (await request("/api/admin/status")).json();
+  assert.equal(
+    photoStatus.services.find((s) => s.service === "photos").connection.state,
+    "ok",
+  );
+  assert.equal(
+    photoStatus.services.find((s) => s.service === "photos").realAppleValidated,
+    true,
+  );
+  assert.equal(photoStatus.productionValidated, false);
   const ticket = await issueDownload(
     ticketEnv,
     owner,

@@ -921,6 +921,7 @@ export class AppleSessionRepository {
         "CONFLICT",
         "The Apple session changed before this operation.",
         409,
+        saved.fence.generation === expectedGeneration,
       );
     const now = Date.now();
     requireCurrentLogin(saved.session.login, now);
@@ -994,6 +995,7 @@ export class AppleSessionRepository {
         "CONFLICT",
         "The Apple session changed before this operation.",
         409,
+        saved.fence.generation === expectedGeneration,
       );
     const now = Date.now();
     requireCurrentLogin(saved.session.login, now);

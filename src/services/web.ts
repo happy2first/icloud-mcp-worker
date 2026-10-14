@@ -19,6 +19,31 @@ import { appleWebHeaders } from "../transport/apple-http.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 import { requireAppleEnabled } from "../auth/gates.ts";
 export type PcsService = "notes3" | "photos" | "iclouddrive";
+// Retry preparation only; the service callback (including writes) is never
+// replayed by this queue. D1 leases still coordinate separate Worker isolates.
+export async function prepareWebRead<T>(
+  prepare: () => Promise<T>,
+  deadline: number,
+  wait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+) {
+  const until = Math.min(deadline - 18_000, Date.now() + 12_000);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prepare();
+    } catch (error) {
+      if (
+        !(error instanceof AppError) ||
+        error.code !== "CONFLICT" ||
+        !error.retryable ||
+        attempt >= 12 ||
+        Date.now() + 1000 > until
+      )
+        throw error;
+      await wait(1000);
+    }
+  }
+}
 // pyicloud treats FMIP 450 as full sign-in, not a saved-token exchange.
 export class FindMySignInRequired extends AppError {
   constructor(diagnostic: string) {
@@ -58,24 +83,27 @@ export async function webOperation<T>(
   const renewal = new AppleSessionRenewal(env, repo);
   const budget = appleRequestBudget();
   for (let attempt = 0; attempt < 2; attempt++) {
-    const saved = await renewal.ensure(
-      initial.fence.generation,
-      budget,
-      service === "fmip" &&
-        !initial.session.connection.services?.fmip &&
-        attempt === 0,
-    );
-    if (budget.deadline <= Date.now())
-      throw new AppError(
-        "UPSTREAM_UNAVAILABLE",
-        "Apple request deadline reached. Retry later.",
-        503,
-        true,
+    const { saved, fence } = await prepareWebRead(async () => {
+      const saved = await renewal.ensure(
+        initial.fence.generation,
+        budget,
+        service === "fmip" &&
+          !initial.session.connection.services?.fmip &&
+          attempt === 0,
       );
-    const fence = await repo.claimRenewal(
-      saved.fence.generation,
-      saved.fence.version,
-    );
+      if (budget.deadline <= Date.now())
+        throw new AppError(
+          "UPSTREAM_UNAVAILABLE",
+          "Apple request deadline reached. Retry later.",
+          503,
+          true,
+        );
+      const fence = await repo.claimRenewal(
+        saved.fence.generation,
+        saved.fence.version,
+      );
+      return { saved, fence };
+    }, budget.deadline);
     const http = AppleAuthHTTP.restore(
       saved.session.auth,
       fetch,
