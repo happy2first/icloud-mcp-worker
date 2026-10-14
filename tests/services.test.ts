@@ -22,6 +22,31 @@ import {
 import { DriveClient } from "../src/services/drive.ts";
 import { WebClient } from "../src/services/web.ts";
 import { assetURL } from "../src/services/downloads.ts";
+import { thumbnailMimeType } from "../src/mcp/services.ts";
+
+test("thumbnail type follows supported image signatures, never HTML or a generic binary header", () => {
+  assert.equal(
+    thumbnailMimeType(new Uint8Array([255, 216, 255, 224])),
+    "image/jpeg",
+  );
+  assert.equal(
+    thumbnailMimeType(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])),
+    "image/png",
+  );
+  assert.equal(
+    thumbnailMimeType(new TextEncoder().encode("GIF89a")),
+    "image/gif",
+  );
+  assert.equal(
+    thumbnailMimeType(new TextEncoder().encode("RIFF0000WEBP")),
+    "image/webp",
+  );
+  assert.equal(
+    thumbnailMimeType(new TextEncoder().encode("<html>private</html>")),
+    null,
+  );
+  assert.equal(thumbnailMimeType(new TextEncoder().encode("<svg/>")), null);
+});
 import { advancePcs, freshPcsCheckpoint } from "../src/auth/apple/pcs.ts";
 import { AppleAuthHTTP } from "../src/auth/apple/http.ts";
 import { AppleHTTP } from "../src/transport/apple-http.ts";

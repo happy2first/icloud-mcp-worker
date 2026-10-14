@@ -66,6 +66,27 @@ function result(value: any) {
     structuredContent: value,
   };
 }
+export function thumbnailMimeType(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 255 &&
+    bytes[1] === 216 &&
+    bytes[2] === 255
+  )
+    return "image/jpeg";
+  if (
+    bytes.length >= 8 &&
+    [137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => bytes[i] === v)
+  )
+    return "image/png";
+  const ascii = (start: number, end: number) =>
+    String.fromCharCode(...bytes.slice(start, end));
+  if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(ascii(0, 6)))
+    return "image/gif";
+  if (bytes.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP")
+    return "image/webp";
+  return null;
+}
 export function thumbnailResult(value: {
   mimeType: string | null;
   base64: string;
@@ -435,7 +456,7 @@ export function registerServices(
       const r = await download(env, owner, ticket.resourceUri.split("://")[1]);
       const bytes = await limitedBytes(r, 1048576);
       return {
-        mimeType: r.headers.get("content-type"),
+        mimeType: thumbnailMimeType(bytes),
         base64: toBase64(bytes),
       };
     },

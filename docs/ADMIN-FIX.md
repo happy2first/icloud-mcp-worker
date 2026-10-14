@@ -95,3 +95,6 @@ pyicloud 的 requestWebAccessState 允许省略 isICDRSDisabled 和 isDeviceCons
 
 - 资产白名单补丁后，drive_download 已真实生成带 Access 保护的下载引用。photos_download / photos_thumbnail 再测则在获取资源 token 前的 CloudKit 查询超时，诊断确认其独立 WebClient 路径仍是 8 秒。因此也将该路径的只读 records/query 上限设为 16 秒，保持外层截止时间及主动操作禁止重放。
 - 全工具读取结果按真实成功、预期参数拒绝、依赖阻断分别报告；不把下载引用生成当作文件内容已经传输，不把参数拒绝当作实际写入测试成功。
+
+- 照片查询超时补丁部署后，photos_download 已成功生成引用；photos_thumbnail 实际下载后因媒体类型不匹配被拒。缩略图入口现按 JPEG/PNG/GIF/WebP 文件签名识别类型，不依赖 generic binary Content-Type；未知内容和 HTML/SVG 不作为图片发送。
+- 日历单条读取已用真实查询返回的事件 URL 验证成功。云盘下载只验证引用生成，未声称文件已经导出。查找设备列表的 HTTP 450 与依赖设备 ID 的定位仍未通过，播放声音未执行。
