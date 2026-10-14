@@ -932,7 +932,11 @@ function parseTopLevelError(
         "Apple rejected the reminder write fields. No automatic retry was attempted.",
       );
     // An unfamiliar error after submission is not proof that nothing was saved.
-    throw new WriteOutcomeUnknownError(String(body.recordName ?? ""));
+    throw new WriteOutcomeUnknownError(
+      String(body.recordName ?? ""),
+      undefined,
+      `Apple write response: serverErrorCode=${/^[A-Z_]{1,64}$/.test(normalized) ? normalized : "unrecognized"}; HTTP=${context.upstreamStatus}.`,
+    );
   }
   throw new AppError(
     "PROTOCOL_CHANGED",

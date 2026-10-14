@@ -58,10 +58,11 @@ export class UpstreamRateLimitedError extends AppError {
 export class WriteOutcomeUnknownError extends AppError {
   readonly reminderId: string;
   readonly idempotencyKey?: string;
-  constructor(reminderId: string, idempotencyKey?: string) {
+  constructor(reminderId: string, idempotencyKey?: string, detail?: string) {
     super(
       "WRITE_OUTCOME_UNKNOWN",
-      "Apple may have saved the reminder, but this request could not confirm the result. Read the reminder before trying another change. For creation, reuse the same idempotencyKey; never generate another ID for this attempt.",
+      "Apple may have saved the reminder, but this request could not confirm the result. Read the reminder before trying another change. For creation, reuse the same idempotencyKey; never generate another ID for this attempt." +
+        (detail ? ` Details: ${detail}` : ""),
       503,
       false,
     );

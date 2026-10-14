@@ -567,6 +567,7 @@ export class AppleConnectionService {
         ? `Reminder/${input.idempotencyKey.toUpperCase()}`
         : input.reminderId;
     let applied = false;
+    let occurrenceId: string | undefined;
     try {
       return await this.operation(
         input.expectedGeneration,
@@ -656,6 +657,7 @@ export class AppleConnectionService {
               owner,
             );
             await repository.assertWriteLease(fence);
+            occurrenceId = plan.historyId;
             stage.dispatch();
             applied = true; // Atomic dispatch may already have committed if confirmation is lost.
             const records = await client.modifyOccurrence(plan.operations);
@@ -768,6 +770,9 @@ export class AppleConnectionService {
         throw new WriteOutcomeUnknownError(
           targetId,
           input.action === "create" ? input.idempotencyKey : undefined,
+          occurrenceId
+            ? `Occurrence=${occurrenceId}; ${error instanceof AppError ? error.code + ": " + error.message : "confirmation unavailable"}`
+            : undefined,
         );
       throw error;
     }
