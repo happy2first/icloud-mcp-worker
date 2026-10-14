@@ -411,10 +411,6 @@ test("copy buttons preserve dynamic endpoint and complete result text", async ()
     await Promise.resolve();
     assert.equal(h.copied[2], detail);
     assert.deepEqual(JSON.parse(h.copied[2]), h.state);
-    const verify = h.document.querySelector(
-      'a[href="/connect/apple?service=findmy"]',
-    );
-    assert.equal(verify?.textContent, "验证查找");
   } finally {
     h.ui.destroy();
   }
@@ -556,6 +552,9 @@ test("Find My errors distinguish web credentials from App passwords and explain 
   const h = await setup();
   try {
     await h.settle();
+    const verificationLink = () =>
+      h.document.querySelector('a[href="/connect/apple?service=findmy"]');
+    assert.equal(verificationLink(), null);
     h.state.services.find((s) => s.service === "findmy")!.connection = {
       state: "error",
       checkedAt: Date.now(),
@@ -572,6 +571,19 @@ test("Find My errors distinguish web credentials from App passwords and explain 
     assert.ok(card.textContent.includes("Apple 网页会话"));
     assert.ok(card.textContent.includes("通过 MCP 播放声音"));
     assert.ok(card.textContent.includes("HTTP 421"));
+    assert.equal(verificationLink()?.textContent, "验证查找");
+    const service = h.state.services.find((s) => s.service === "findmy")!;
+    for (const code of ["VERIFICATION_REQUIRED", "UPSTREAM_UNAVAILABLE"]) {
+      service.connection.error.code = code;
+      h.el("refresh").click();
+      await h.settle();
+      assert.equal(!!verificationLink(), code === "VERIFICATION_REQUIRED");
+    }
+    service.connection = { state: "ok", checkedAt: Date.now() };
+    h.el("refresh").click();
+    await h.settle();
+    assert.equal(verificationLink(), null);
+    assert.ok(h.requests.every((r) => r.path === "/api/admin/status"));
   } finally {
     h.ui.destroy();
   }

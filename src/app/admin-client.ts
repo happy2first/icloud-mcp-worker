@@ -458,7 +458,14 @@ export function mountAdmin(
       result.hidden = true;
       card.appendChild(result);
       actions.appendChild(check);
-      if (s.service === "findmy" && s.credentialAvailable) {
+      if (
+        s.service === "findmy" &&
+        s.credentialAvailable &&
+        s.connection?.state === "error" &&
+        ["REAUTH_REQUIRED", "VERIFICATION_REQUIRED"].includes(
+          s.connection.error?.code ?? "",
+        )
+      ) {
         const verify = doc.createElement("a");
         verify.className = "button secondary";
         verify.href = "/connect/apple?service=findmy";
