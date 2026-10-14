@@ -1,12 +1,14 @@
 # Authentication and management review / 认证与管理页复核
 
+> Historical review/checklist. For current live evidence and limits, see [VALIDATION.md](VALIDATION.md). 本文件保留当时的审查/验收计划，当前状态以验证记录为准。
+
 Review completed against current upstream source on 2026-10-13 (Asia/Shanghai). This is source/DOM/local-runtime evidence, not certification of Apple production compatibility.
 
 ## Latest references checked
 
-| Source | Latest HEAD inspected | Relevant differences |
-|---|---|---|
-| Xzese Worker | `15f2d3a335f2fd8f30b47f836d2154ca5cc4f335` | Since the original `f4da3d8`, authentication/crypto/transport/socket core is unchanged. New commits mainly add jobs, list management and complex reminder lifecycle/scheduling. Relevant simple-write token advancement and native all-day guards were ported; broad new feature families were not transplanted. |
+| Source            | Latest HEAD inspected                                            | Relevant differences                                                                                                                                                                                                                                                                                                              |
+| ----------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Xzese Worker      | `15f2d3a335f2fd8f30b47f836d2154ca5cc4f335`                       | Since the original `f4da3d8`, authentication/crypto/transport/socket core is unchanged. New commits mainly add jobs, list management and complex reminder lifecycle/scheduling. Relevant simple-write token advancement and native all-day guards were ported; broad new feature families were not transplanted.                  |
 | timlaing/pyicloud | `fb56ed6652f2d99ca8dc3cf515f7db0b319fcf1d` (`2026.10.0` release) | Since original `d0a0d37`, base authentication and SRP algorithm are unchanged; base.py changes are Find My-related. New generic CloudKit record rejection handling and exception hierarchy were inspected. Worker already classifies per-record failures and uses a common typed AppError hierarchy; Drive protocol is unchanged. |
 
 Both authorize/signin implementations use `authVersion=latest`; the Worker has a regression assertion for that parameter. Client build/mastering identifiers `2534Project66` / `2534B22` still match current Xzese. These are observed private-protocol identifiers, not evidence that Apple has promised long-term support or that a live server used the same protocol today. Latest source was read directly, including relevant tests; this was not a README-only version check.
@@ -23,17 +25,17 @@ Both authorize/signin implementations use `authVersion=latest`; the Worker has a
 
 ## Management interaction findings and fixes
 
-| Flow | Original gap | Current behavior |
-|---|---|---|
-| Load configuration | Inputs could submit before current version existed | Credential fields/actions disabled until status loads; a failed load leaves a refresh path |
-| Credential entry | Generic JSON state and mixed-language login | Chinese steps, shared typography/colors/buttons, clear distinction between primary and app-specific passwords |
-| Enable/write permission | Rapid independent checkbox changes could restore stale state | One operation at a time; stop/disable clears write permission; backend rejects disabled+writable |
-| PCS | Waiting state and per-service timing were unclear | Four independent card buttons, persisted retry/exhaustion countdown, no automatic Apple polling |
-| Live check | Success result replaced entire raw status | Local check result is labeled as one read at a time, separate from stored state and full acceptance |
-| Errors | Failure and Access HTML login responses were not recoverable | Actionable error codes, read-state retry, password cleared after submission, mutation not automatically replayed |
-| Disconnect/remove | Effects on the other credential class were unclear | Confirmation explains affected services and that Apple contents are not deleted; version-checked local credential removal |
-| Device code | Entire verification form appeared during proof computation | Code input appears only when the challenge arrives; disabled while verifying; completion returns to service PCS setup |
-| Mobile structure | Wide table, small controls and inconsistent spacing | Single-column service cards, wrapping/stacked action rows below 480px, 16px base text, 48px buttons/fields/toggle rows, numeric OTP keyboard and matching styles |
+| Flow                    | Original gap                                                 | Current behavior                                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Load configuration      | Inputs could submit before current version existed           | Credential fields/actions disabled until status loads; a failed load leaves a refresh path                                                                       |
+| Credential entry        | Generic JSON state and mixed-language login                  | Chinese steps, shared typography/colors/buttons, clear distinction between primary and app-specific passwords                                                    |
+| Enable/write permission | Rapid independent checkbox changes could restore stale state | One operation at a time; stop/disable clears write permission; backend rejects disabled+writable                                                                 |
+| PCS                     | Waiting state and per-service timing were unclear            | Four independent card buttons, persisted retry/exhaustion countdown, no automatic Apple polling                                                                  |
+| Live check              | Success result replaced entire raw status                    | Local check result is labeled as one read at a time, separate from stored state and full acceptance                                                              |
+| Errors                  | Failure and Access HTML login responses were not recoverable | Actionable error codes, read-state retry, password cleared after submission, mutation not automatically replayed                                                 |
+| Disconnect/remove       | Effects on the other credential class were unclear           | Confirmation explains affected services and that Apple contents are not deleted; version-checked local credential removal                                        |
+| Device code             | Entire verification form appeared during proof computation   | Code input appears only when the challenge arrives; disabled while verifying; completion returns to service PCS setup                                            |
+| Mobile structure        | Wide table, small controls and inconsistent spacing          | Single-column service cards, wrapping/stacked action rows below 480px, 16px base text, 48px buttons/fields/toggle rows, numeric OTP keyboard and matching styles |
 
 Tests exercise the actual rendered document and client logic in a DOM implementation, including load locks, duplicate requests, credential normalization/clearing, permission rollback, Access-session errors, PCS wait state, disconnect cancellation, code-phase transitions and status recovery. A DOM implementation does not render CSS or emulate WebKit.
 

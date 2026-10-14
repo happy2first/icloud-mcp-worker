@@ -12,5 +12,6 @@ No Python subprocess or Python code runs in the deployed Worker. tests/fixtures/
 
 Fixture agreement is not independent proof of Apple protocol correctness. Neither the repository license nor passing tests substitutes for account authorization, cryptographic review or real hosted acceptance.
 
-
 Find My HTTP/state handling in `src/services/findmy.ts` also follows timlaing/pyicloud at commit `fb56ed6652f2d99ca8dc3cf515f7db0b319fcf1d` (MIT). Existing pyicloud MIT notices remain included. See `docs/FINDMY-VALIDATION.md` for exact source references and Worker adaptations.
+
+The 2026-10-14 timed recurring-completion recipe and date-component helpers in `src/reminders/recurring-completion.ts` and `src/reminders/date-components.ts` additionally adapt Xzese/icloud-mcp-for-cloudflare-workers's `recurring-lifecycle.ts` and `linked-date.ts` (MIT), inspected on that date. Copyright remains covered by the root LICENSE and the source headers. This bounded port supports only the documented timed interval-one daily/weekly recipe; it does not include all upstream recurrence, journal or scheduling features.

@@ -2,7 +2,7 @@
 
 ## Reproduction and cause
 
-The live MCP `photos_get` call for `97BA86C0-62F6-4F89-B55A-72613843B93F` reproduced `CONFLICT: Photo missing from the supported library index.` (requestId `9fd46107-0767-49ce-a06f-845014768c73`). Historical Worker logs were unavailable in this environment.
+The live MCP `photos_get` call for `REDACTED` reproduced `CONFLICT: Photo missing from the supported library index.` (requestId `REDACTED`). Historical Worker logs were unavailable in this environment.
 
 Source inspection found that `get()` used the rank-based query index with `startRank=0`, a limit of two, and a `recordName` filter, then searched those results for the requested ID. The implementation had no persistent photo index. This is not reliable exact record lookup and explains why listed deep-page IDs can fail while some initial photos work; Apple's treatment of that index filter still needs live confirmation.
 

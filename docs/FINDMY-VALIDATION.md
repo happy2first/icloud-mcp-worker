@@ -1,5 +1,7 @@
 # Find My implementation and validation / 实现及验收
 
+> Historical review/checklist. For current live evidence and limits, see [VALIDATION.md](VALIDATION.md). 本文件保留当时的审查/验收计划，当前状态以验证记录为准。
+
 Reviewed 2026-10-13 against timlaing/pyicloud main commit `fb56ed6652f2d99ca8dc3cf515f7db0b319fcf1d`:
 
 - [findmyiphone.py](https://github.com/timlaing/pyicloud/blob/fb56ed6652f2d99ca8dc3cf515f7db0b319fcf1d/pyicloud/services/findmyiphone.py), blob `15273aaca30c8cd2205190c98dcdae4294ef83f0`.
