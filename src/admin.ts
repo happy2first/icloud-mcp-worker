@@ -15,7 +15,7 @@ export function adminPage(adminScript = "") {
 <article class="credential-card"><div class="credential-heading"><h3>App 专用密码</h3><span id="dav-state" class="credential-status">正在读取…</span></div><p>日历、通讯录</p><div id="dav-saved-actions" class="actions" hidden><button id="edit-dav" class="secondary">更新凭证</button><button id="remove" class="danger" disabled>移除</button></div><div id="dav-entry" hidden><form id="dav"><fieldset id="dav-fields" disabled><label for="account">Apple 账户邮箱</label><input id="account" type="email" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="320" required><label for="password">App 专用密码</label><input id="password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" placeholder="xxxx-xxxx-xxxx-xxxx" required><div class="actions"><button id="save" type="submit">保存</button><button id="cancel-dav" type="button" class="secondary" hidden>取消</button></div></fieldset></form><a class="help-link" href="https://account.apple.com/" target="_blank" rel="noopener noreferrer">获取 App 专用密码</a></div><div id="dav-result" class="operation-result" hidden></div></article>
 </div></section>
 <section><div class="section-heading"><h2>服务连接</h2><small>显示上次检查结果，不是实时监测</small></div><div id="services" aria-busy="true"></div></section>
-<details class="technical"><summary>技术详情</summary><pre id="status"></pre></details>
+<details class="technical"><summary>技术详情</summary><div class="actions"><button id="copy-status" class="icon-button" aria-label="复制技术详情" title="复制技术详情">${copyIcon}</button></div><pre id="status"></pre></details>
 <noscript><p>请启用 JavaScript 后再配置。未启用时不会提交密码。</p></noscript></main><script nonce="${nonce}">${adminScript}</script></body></html>`,
     {
       headers: {

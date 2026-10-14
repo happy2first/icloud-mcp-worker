@@ -520,7 +520,7 @@ try {
   );
   assert.match(
     rejectedFindMy.result.structuredContent.error.message,
-    /fresh Apple web sign-in/,
+    /Find My rejected this web session/,
   );
   assert.equal(calls.length - beforeRejectedCalls, 1);
   const afterRejectedSession = await repo.load();

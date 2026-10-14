@@ -50,7 +50,7 @@ export class FindMySignInRequired extends AppError {
     super(
       "REAUTH_REQUIRED",
       diagnostic +
-        " Find My requires a fresh Apple web sign-in. In /admin, expand Apple web login, sign in and complete device verification, then check Find My. App-specific passwords cannot authenticate Find My. Other iCloud credentials were preserved; no token exchange or automatic replay was performed.",
+        " Find My rejected this web session. If it was just verified, do not repeat sign-in: HTTP 450 alone cannot identify the cause; inspect cookieContext and responseFormat. App-specific passwords cannot authenticate Find My. Other iCloud credentials were preserved; no token exchange or automatic replay was performed.",
       409,
     );
   }
@@ -70,13 +70,16 @@ export async function webOperation<T>(
   if (
     service === "fmip" &&
     fmipRecovery &&
-    (fmipRecovery.nextRetryAt === null || Date.now() < fmipRecovery.nextRetryAt)
+    ((fmipRecovery.nextRetryAt === null &&
+      fmipRecovery.message.includes("cookieContext=")) ||
+      (fmipRecovery.nextRetryAt !== null &&
+        Date.now() < fmipRecovery.nextRetryAt))
   )
     throw new AppError(
       fmipRecovery.code,
       fmipRecovery.message +
         (fmipRecovery.nextRetryAt === null
-          ? " Find My is waiting for a new Apple web sign-in; no Apple request made on this attempt."
+          ? " Find My remains blocked for this session; no Apple request made on this attempt. Inspect the diagnostic before repeating sign-in."
           : " Cached Find My recovery failure; no Apple request made on this attempt. Wait before retrying."),
       409,
     );
@@ -345,6 +348,13 @@ export class WebClient {
   ) {
     const url = new URL(path, this.root(service));
     for (const [k, v] of this.params()) url.searchParams.set(k, v);
+    // Capture cookie eligibility before the response can delete any cookie.
+    // Boolean presence only: values, account identifiers and token contents stay private.
+    const cookieNames = new Set(
+      (service === "fmip" ? this.auth.http.jar.header(url) : "")
+        .split("; ")
+        .map((part) => part.split("=")[0]),
+    );
     const r = await this.auth.http.request(url.href, {
       discovered: true,
       headers: appleWebHeaders(this.auth.region),
@@ -362,7 +372,24 @@ export class WebClient {
       } catch {
         // Non-JSON auth errors still carry an actionable HTTP status.
       }
-      const diagnostic = `Apple fmip ${url.pathname} (${this.auth.region}; host=${url.hostname}): HTTP ${r.status}; statusCode=${["200", "203", "401", "403", "421", "450"].includes(String(fmipBody?.statusCode)) ? fmipBody.statusCode : "missing-or-unrecognized"}; termsUpdateNeeded=${fmipBody?.termsUpdateNeeded === true ? "true" : fmipBody?.termsUpdateNeeded === false ? "false" : "missing"}.`;
+      const cookieContext = JSON.stringify({
+        webAuthToken: cookieNames.has("X-APPLE-WEBAUTH-TOKEN"),
+        webAuthUser: cookieNames.has("X-APPLE-WEBAUTH-USER"),
+        webAuthValidate: cookieNames.has("X-APPLE-WEBAUTH-VALIDATE"),
+        webSessionToken: cookieNames.has("X-APPLE-DS-WEB-SESSION-TOKEN"),
+        trustCookie: [...cookieNames].some((name) =>
+          name.startsWith("X-APPLE-WEBAUTH-HSA-TRUST-"),
+        ),
+      });
+      const responseFormat =
+        fmipBody && typeof fmipBody === "object"
+          ? "json"
+          : r.bytes.length === 0
+            ? "empty"
+            : r.headers.get("content-type")?.includes("html")
+              ? "html"
+              : "other";
+      const diagnostic = `Apple fmip ${url.pathname} (${this.auth.region}; host=${url.hostname}): HTTP ${r.status}; statusCode=${["200", "203", "401", "403", "421", "450"].includes(String(fmipBody?.statusCode)) ? fmipBody.statusCode : "missing-or-unrecognized"}; termsUpdateNeeded=${fmipBody?.termsUpdateNeeded === true ? "true" : fmipBody?.termsUpdateNeeded === false ? "false" : "missing"}; cookieContext=${cookieContext}; responseFormat=${responseFormat}.`;
       if (fmipBody?.termsUpdateNeeded === true)
         throw new AppError(
           "TERMS_ACTION_REQUIRED",

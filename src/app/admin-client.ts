@@ -602,6 +602,11 @@ export function mountAdmin(
       el<HTMLButtonElement>("copy-result"),
     );
   el("dismiss-result").onclick = dismissNotice;
+  el("copy-status").onclick = () =>
+    void copy(
+      el("status").textContent ?? "",
+      el<HTMLButtonElement>("copy-status"),
+    );
   controls();
   void action(async () => "页面状态已更新。");
   const timer = setInterval(controls, 1000);

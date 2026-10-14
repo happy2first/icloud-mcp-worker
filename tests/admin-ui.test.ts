@@ -406,6 +406,11 @@ test("copy buttons preserve dynamic endpoint and complete result text", async ()
     await Promise.resolve();
     assert.equal(h.copied[1], result);
     assert.equal(h.el("notice").textContent, "已复制");
+    const detail = h.el("status").textContent;
+    h.el("copy-status").click();
+    await Promise.resolve();
+    assert.equal(h.copied[2], detail);
+    assert.deepEqual(JSON.parse(h.copied[2]), h.state);
   } finally {
     h.ui.destroy();
   }
