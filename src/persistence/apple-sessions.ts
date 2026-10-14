@@ -972,8 +972,12 @@ export class AppleSessionRepository {
   async claimRead(
     expectedGeneration: number,
     expectedVersion?: number,
+    leaseMs = RESUME_LEASE_MS,
   ): Promise<ResumeFence> {
     if (
+      !Number.isSafeInteger(leaseMs) ||
+      leaseMs < RESUME_LEASE_MS ||
+      leaseMs > 90_000 ||
       !Number.isSafeInteger(expectedGeneration) ||
       expectedGeneration < 0 ||
       (expectedVersion !== undefined &&
@@ -1000,10 +1004,7 @@ export class AppleSessionRepository {
     const now = Date.now();
     requireCurrentLogin(saved.session.login, now);
     const resumeId = crypto.randomUUID();
-    const expiresAt = Math.min(
-      now + RESUME_LEASE_MS,
-      saved.session.login.expiresAt,
-    );
+    const expiresAt = Math.min(now + leaseMs, saved.session.login.expiresAt);
     const versionPredicate =
       expectedVersion === undefined ? "" : " AND version = ?";
     const values: (string | number)[] = [
@@ -1043,7 +1044,7 @@ export class AppleSessionRepository {
     };
   }
 
-  async assertWriteLease(fence: ResumeFence) {
+  async assertWriteLease(fence: ResumeFence, minimumRemainingMs = 10_000) {
     // Recheck immediately before dispatch. Reads used to prepare the write must
     // not consume the remaining lease or let a disconnect/reconnect go unnoticed.
     const now = Date.now();
@@ -1057,7 +1058,7 @@ export class AppleSessionRepository {
         fence.generation,
         fence.version,
         fence.resumeId,
-        now + 10_000,
+        now + minimumRemainingMs,
       )
       .first<{ active: number }>();
     if (!row)

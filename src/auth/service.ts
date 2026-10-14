@@ -656,7 +656,7 @@ export class AppleConnectionService {
               trigger,
               owner,
             );
-            await repository.assertWriteLease(fence);
+            await repository.assertWriteLease(fence, 29_000);
             occurrenceId = plan.historyId;
             stage.dispatch(29_000);
             applied = true; // Atomic dispatch may already have committed if confirmation is lost.
@@ -826,7 +826,11 @@ export class AppleConnectionService {
               expectedGeneration,
               saved.fence.version,
             )
-          : await repository.claimRead(expectedGeneration, saved.fence.version);
+          : await repository.claimRead(
+              expectedGeneration,
+              saved.fence.version,
+              mode === "mutation-preparation" ? 60_000 : undefined,
+            );
       const http = AppleAuthHTTP.restore(
         saved.session.auth,
         fetch,

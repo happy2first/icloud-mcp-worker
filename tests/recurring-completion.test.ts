@@ -204,6 +204,12 @@ test("completion keeps the recurring root open, creates exactly one past occurre
         }) as CloudKitRecord,
     );
   assert.equal(verifyOccurrence(p, after, owner).recordName, x.root.recordName);
+  for (const record of after.filter((r) => r.recordType === "Reminder")) {
+    record.fields.LastModifiedDate = f(now + 5000, "TIMESTAMP");
+    if (record.recordName === p.historyId)
+      record.fields.CreationDate = f(now + 500, "TIMESTAMP");
+  }
+  assert.equal(verifyOccurrence(p, after, owner).recordName, x.root.recordName);
   after.find((r) => r.recordName === x.root.recordName)!.fields.Completed =
     f(1);
   assert.throws(

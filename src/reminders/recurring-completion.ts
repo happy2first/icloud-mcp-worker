@@ -435,6 +435,7 @@ export function planRecurringCompletion(
     historyId,
     nextDueDate: next,
     originalDueDate: r.dueDate,
+    dispatchedAt: now,
     rootId: root.recordName,
     preservedRootFields: Object.fromEntries(
       Object.entries(root.fields).filter(
@@ -478,12 +479,41 @@ export function verifyOccurrence(
       throw new WriteOutcomeUnknownError(plan.rootId);
     for (const [key, f] of Object.entries(op.record.fields)) {
       const actual = value(got, key);
+      // CloudKit regenerates creation / modification metadata after linking
+      // the new alarm pairs. They are not proof of another user mutation.
+      if (
+        key === "CreationDate" &&
+        op.operationType === "create" &&
+        actual === f.value
+      )
+        continue;
+      if (
+        key === "LastModifiedDate" ||
+        (key === "CreationDate" && op.operationType === "create")
+      ) {
+        if (
+          typeof actual !== "number" ||
+          !Number.isSafeInteger(actual) ||
+          actual < plan.dispatchedAt ||
+          actual > Date.now() + 300_000
+        )
+          throw new WriteOutcomeUnknownError(
+            plan.rootId,
+            undefined,
+            `Invalid Apple-managed ${got.recordType}.${key}.`,
+          );
+        continue;
+      }
       if (
         f.type === "REFERENCE"
           ? actual?.recordName !== (f.value as any)?.recordName
           : JSON.stringify(actual) !== JSON.stringify(f.value)
       )
-        throw new WriteOutcomeUnknownError(plan.rootId);
+        throw new WriteOutcomeUnknownError(
+          plan.rootId,
+          undefined,
+          `Occurrence confirmation differed at ${got.recordType}.${key}; no replay.`,
+        );
     }
   }
   for (const [record, fields] of [
