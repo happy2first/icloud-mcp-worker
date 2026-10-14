@@ -219,6 +219,17 @@ test("stale versions and unsynchronized alarms never produce a write plan", () =
   x.alarm.fields.DueDateResolutionTokenAsNonce = f(0, "DOUBLE");
   assert.throws(() => plan(x), /synchronized/);
 });
+test("lists with no explicit ordering keep all existing ordering metadata untouched", () => {
+  const x = fixture();
+  delete x.list.fields.ReminderIDs;
+  delete x.list.fields.ResolutionTokenMap;
+  x.list.fields.NativeOrdering = f("preserve", "STRING");
+  const p = plan(x);
+  assert.deepEqual(p.operations[2].record.fields, { Deleted: f(0) });
+  assert.equal(p.operations[0].record.fields.Completed.value, 0);
+  assert.equal(p.operations[1].record.fields.Completed.value, 1);
+  assert.equal(p.nextDueDate, "2026-10-21T01:00:00.000Z");
+});
 test("unsupported recurring shapes remain refused instead of completing the series", () => {
   for (const change of [
     (x: ReturnType<typeof fixture>) =>

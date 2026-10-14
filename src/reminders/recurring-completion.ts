@@ -290,8 +290,7 @@ export function planRecurringCompletion(
   if (
     list.recordType !== "List" ||
     list.recordName !== r.listId ||
-    !members ||
-    new Set(members).size !== members.length ||
+    (members !== null && new Set(members).size !== members.length) ||
     normalizeList(list, false).isGroup !== false ||
     normalizeList(list, false).deleted !== false
   )
@@ -300,19 +299,38 @@ export function planRecurringCompletion(
       `Recurring completion requires exact owned list membership: available=${members !== null}; count=${members?.length ?? "missing"}; unique=${members ? new Set(members).size : "missing"}; group=${normalizeList(list, false).isGroup}; deleted=${normalizeList(list, false).deleted}. No completion was dispatched.`,
       409,
     );
-  const order = JSON.parse(value(list, "ReminderIDs")) as string[],
-    index = members.indexOf(root.recordName);
-  if (index < 0)
-    throw new AppError(
-      "CONFLICT",
-      "The recurring root is absent from its exact list membership.",
-      409,
+  // Apple also returns lists without explicit ReminderIDs ordering. Their
+  // membership is the exact Reminder.List reference / intrinsic List parent.
+  // Guard the observed list version without inventing an ordering array.
+  let membershipFields: typeof activeFields = {
+    Deleted: { type: "INT64", value: 0 },
+  };
+  if (members !== null) {
+    const order = JSON.parse(value(list, "ReminderIDs")) as string[];
+    const index = members.indexOf(root.recordName);
+    if (index < 0)
+      throw new AppError(
+        "CONFLICT",
+        "The recurring root is absent from explicit list membership.",
+        409,
+      );
+    order.splice(
+      index,
+      0,
+      order[index].includes("/") ? historyId : historyId.slice(9),
     );
-  order.splice(
-    index,
-    0,
-    order[index].includes("/") ? historyId : historyId.slice(9),
-  );
+    membershipFields = {
+      ReminderIDs: { type: "STRING", value: JSON.stringify(order) },
+      ResolutionTokenMap: {
+        type: "STRING",
+        value: updateResolutionTokenMap(
+          list,
+          ["reminderIDsMergeableOrdering"],
+          now,
+        ),
+      },
+    };
+  }
   const ops: OccurrenceOperation[] = [
     {
       operationType: "update",
@@ -338,17 +356,7 @@ export function planRecurringCompletion(
         recordName: list.recordName,
         recordType: "List",
         recordChangeTag: list.recordChangeTag,
-        fields: {
-          ReminderIDs: { type: "STRING", value: JSON.stringify(order) },
-          ResolutionTokenMap: {
-            type: "STRING",
-            value: updateResolutionTokenMap(
-              list,
-              ["reminderIDsMergeableOrdering"],
-              now,
-            ),
-          },
-        },
+        fields: membershipFields,
       },
     },
     {
@@ -461,7 +469,11 @@ export function verifyOccurrence(
       got.deleted ||
       !got.recordChangeTag ||
       (op.operationType === "update" &&
-        got.recordChangeTag === op.record.recordChangeTag)
+        got.recordChangeTag === op.record.recordChangeTag &&
+        !(
+          Object.keys(op.record.fields).length === 1 &&
+          op.record.fields.Deleted?.value === 0
+        ))
     )
       throw new WriteOutcomeUnknownError(plan.rootId);
     for (const [key, f] of Object.entries(op.record.fields)) {
