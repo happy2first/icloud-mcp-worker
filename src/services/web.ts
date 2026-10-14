@@ -302,6 +302,9 @@ export class WebClient {
     const r = await this.auth.http.request(url.href, {
       discovered: true,
       headers: appleWebHeaders(this.auth.region),
+      ...(service === "ckdatabasews" && url.pathname.endsWith("/records/query")
+        ? { timeoutMs: 16_000 }
+        : {}),
       method: payload === undefined ? "GET" : "POST",
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });

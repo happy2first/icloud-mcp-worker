@@ -92,3 +92,6 @@ pyicloud 的 requestWebAccessState 允许省略 isICDRSDisabled 和 isDeviceCons
 - photos_download / photos_thumbnail / drive_download 实测遇到资产域名白名单拒绝。白名单只含 icloud-content.com，漏了中国大陆区 icloud-content.com.cn；2026-10-14 使用匿名 HTTPS HEAD 直接核对 https://www.icloud.com 的 CSP，img-src / media-src / connect-src 明确列有 *.icloud-content.com.cn。补充该明确域名后仍拒绝 HTTP、userinfo、外部 lookalike 和无关域名。
 - 所有 34 个工具入口均已检查；主动操作与无法取得目标设备 ID 的入口只做参数拒绝测试，不等同于真实业务验收。查找仍返回 HTTP 450，未进行播放声音。
 - 210 项测试、类型检查、构建、本地 workerd 通过。尚需本次资产补丁的新部署后验证缩略图内容和下载引用。
+
+- 资产白名单补丁后，drive_download 已真实生成带 Access 保护的下载引用。photos_download / photos_thumbnail 再测则在获取资源 token 前的 CloudKit 查询超时，诊断确认其独立 WebClient 路径仍是 8 秒。因此也将该路径的只读 records/query 上限设为 16 秒，保持外层截止时间及主动操作禁止重放。
+- 全工具读取结果按真实成功、预期参数拒绝、依赖阻断分别报告；不把下载引用生成当作文件内容已经传输，不把参数拒绝当作实际写入测试成功。

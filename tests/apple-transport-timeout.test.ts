@@ -2,6 +2,43 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AppleHTTP } from "../src/transport/apple-http.ts";
 import { CookieJar } from "../src/transport/cookie-jar.ts";
+import { AppleAuthHTTP } from "../src/auth/apple/http.ts";
+import { WebClient } from "../src/services/web.ts";
+
+test("Photos CloudKit queries use the bounded slower-read timeout too", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1000 });
+  let finish!: (r: Response) => void;
+  let signal!: AbortSignal;
+  const http = new AppleHTTP(new CookieJar(), (async (_url, init) => {
+    signal = init!.signal!;
+    return new Promise<Response>((resolve, reject) => {
+      finish = resolve;
+      signal.addEventListener("abort", () => reject(new Error("aborted")), {
+        once: true,
+      });
+    });
+  }) as typeof fetch);
+  const web = new WebClient(new AppleAuthHTTP(http), {
+    connection: {
+      cloudKitURL:
+        "https://p123-ckdatabasews.icloud.com/database/1/com.apple.reminders/production/private",
+      services: { ckdatabasews: "https://p123-ckdatabasews.icloud.com" },
+      dsid: "123",
+      clientId: "test",
+      clientBuildNumber: "test",
+      clientMasteringNumber: "test",
+    },
+  } as any);
+  try {
+    const read = web.ck("photos", "records/query", {});
+    t.mock.timers.tick(9000);
+    assert.equal(signal.aborted, false);
+    finish(Response.json({ records: [] }));
+    assert.deepEqual(await read, { records: [] });
+  } finally {
+    t.mock.timers.reset();
+  }
+});
 
 test("bounded CloudKit read can finish after the previous eight-second cutoff", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1000 });
