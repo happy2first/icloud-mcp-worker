@@ -85,3 +85,10 @@ pyicloud 的 requestWebAccessState 允许省略 isICDRSDisabled 和 isDeviceCons
 - 真实 notes_list / notes_folders / notes_search / photos_albums / photos_query / drive_browse 在发出数据请求前被 servicePcs.ready=false 阻断。MCP 只读访问现在先读取 Apple requestWebAccessState；关闭数据保护或按 pyicloud 缺字段默认无需 PCS 时允许真实数据请求，并在成功后保存准备状态。Apple 明确需要 PCS 时仍停止；不会发送设备批准通知或 requestPCS。
 - 实测成功：两个状态工具、日历/通讯录目录发现、通讯录查询与单条读取、提醒列表发现与单条读取。全清单汇总保留 26 条并明确不完整；查找一次 Token 交换后仍返回 HTTP 450。不能把目录发现成功等同于所有工具可用。
 - 九个主动工具仅做缺少参数/确认时的拒绝测试：calendar_create/update、contacts_create/update、create/update/complete/reopen_reminder、findmy_play_sound。未写入真实账户或播放声音。依赖照片、笔记、云盘和设备有效 ID 的后续工具在目录读取阻断时不能声称完成真实数据测试。
+
+## 全工具新部署复测
+
+- 6b15c81 部署后：常规提醒实际读出 18 条，完整；全清单汇总先返回 54 条，再以单次游标续读 24 条，8 个列表完整覆盖，合计 78 条，errors=[]。日历查询/单条事件读取、笔记列表/正文/搜索/文件夹、通讯录列表/单条、照片目录/元数据、云盘目录均有真实成功调用。
+- photos_download / photos_thumbnail / drive_download 实测遇到资产域名白名单拒绝。白名单只含 icloud-content.com，漏了中国大陆区 icloud-content.com.cn；2026-10-14 使用匿名 HTTPS HEAD 直接核对 https://www.icloud.com 的 CSP，img-src / media-src / connect-src 明确列有 *.icloud-content.com.cn。补充该明确域名后仍拒绝 HTTP、userinfo、外部 lookalike 和无关域名。
+- 所有 34 个工具入口均已检查；主动操作与无法取得目标设备 ID 的入口只做参数拒绝测试，不等同于真实业务验收。查找仍返回 HTTP 450，未进行播放声音。
+- 210 项测试、类型检查、构建、本地 workerd 通过。尚需本次资产补丁的新部署后验证缩略图内容和下载引用。

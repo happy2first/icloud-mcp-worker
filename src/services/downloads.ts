@@ -11,13 +11,13 @@ export function assetURL(value: string) {
     u.password ||
     u.port ||
     u.hash ||
-    !/^(?:[a-z0-9-]+\.)*(?:icloud-content\.com|icloud\.com(?:\.cn)?)$/.test(
+    !/^(?:[a-z0-9-]+\.)*(?:icloud-content\.com(?:\.cn)?|icloud\.com(?:\.cn)?)$/.test(
       u.hostname,
     )
   )
     throw new AppError(
       "PROTOCOL_CHANGED",
-      "Apple returned an unsupported asset host. No request was sent.",
+      `Apple returned an unsupported asset host (${u.hostname}). No request was sent; signed path and query omitted.`,
     );
   return u;
 }

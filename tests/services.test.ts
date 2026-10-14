@@ -458,11 +458,16 @@ test("signed assets reject non-Apple hosts, userinfo and insecure redirects", ()
     "https://icloud.com.evil.test/x",
     "https://a:b@asset.icloud.com/x",
     "https://127.0.0.1/x",
+    "https://asset.icloud-content.com.cn.evil.test/x",
   ])
     assert.throws(() => assetURL(u));
   assert.equal(
     assetURL("https://abc.icloud-content.com/a?token=synthetic").hostname,
     "abc.icloud-content.com",
+  );
+  assert.equal(
+    assetURL("https://cvws.icloud-content.com.cn/a?token=synthetic").hostname,
+    "cvws.icloud-content.com.cn",
   );
 });
 
