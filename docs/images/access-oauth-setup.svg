@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="610" viewBox="0 0 1100 610" role="img" aria-label="Cloudflare Access Managed OAuth 设置示意">
+<rect width="1100" height="610" fill="#f5f7fb"/><rect x="40" y="28" width="1020" height="545" rx="16" fill="#fff" stroke="#d7ddea"/>
+<rect x="40" y="28" width="270" height="545" rx="16" fill="#f0f3f8"/><rect x="294" y="28" width="16" height="545" fill="#f0f3f8"/>
+<text x="68" y="80" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#243047">Cloudflare Zero Trust</text><text x="71" y="129" font-family="Arial,sans-serif" font-size="16" fill="#55637a">Access controls</text><rect x="58" y="146" width="241" height="45" rx="9" fill="#dce9ff"/><text x="79" y="174" font-family="Arial,sans-serif" font-size="17" fill="#164a8b">Applications</text><text x="71" y="223" font-family="Arial,sans-serif" font-size="15" fill="#55637a">选中自己的 iCloud 应用</text>
+<text x="342" y="82" font-family="Arial,sans-serif" font-size="25" font-weight="700" fill="#1b2233">Access application / Advanced settings</text>
+<text x="342" y="126" font-family="Arial,sans-serif" font-size="18" fill="#526078">① 整个子域名：icloud.example.com（不要只保护 /admin）</text>
+<rect x="342" y="159" width="674" height="57" rx="10" fill="#edf7f1" stroke="#b8dac9"/><text x="364" y="194" font-family="Arial,sans-serif" font-size="20" font-weight="600" fill="#166b44">② Managed OAuth　● Enabled</text>
+<text x="342" y="254" font-family="Arial,sans-serif" font-size="18" font-weight="600" fill="#243047">③ Allowed redirect URIs</text>
+<rect x="342" y="272" width="674" height="66" rx="10" fill="#f6f9ff" stroke="#91b7ec" stroke-width="2"/><text x="364" y="312" font-family="monospace" font-size="22" fill="#164a8b">https://chatgpt.com/connector/oauth/*</text>
+<text x="342" y="376" font-family="Arial,sans-serif" font-size="17" fill="#526078">④ Access policy：Allow → Emails → 仅允许自己的邮箱</text>
+<rect x="342" y="418" width="674" height="59" rx="10" fill="#f7f8fa" stroke="#e2e7ee"/><text x="362" y="444" font-family="Arial,sans-serif" font-size="16" fill="#495a74">⑤ 复制 Application Audience (AUD) Tag → Worker 的 POLICY_AUD</text><text x="362" y="466" font-family="Arial,sans-serif" font-size="13" fill="#78869a">TEAM_DOMAIN 取自 Zero Trust 的团队域名（https://…cloudflareaccess.com）</text>
+<rect x="832" y="499" width="184" height="43" rx="9" fill="#1762d9"/><text x="890" y="527" font-family="Arial,sans-serif" font-size="17" font-weight="600" fill="white">保存</text>
+<text x="50" y="595" font-family="Arial,sans-serif" font-size="14" fill="#7d8aa0">操作示意 · 并非 Cloudflare 控制台真实截图；菜单名称可能随 Cloudflare 版本变化。</text></svg>
