@@ -411,6 +411,10 @@ test("copy buttons preserve dynamic endpoint and complete result text", async ()
     await Promise.resolve();
     assert.equal(h.copied[2], detail);
     assert.deepEqual(JSON.parse(h.copied[2]), h.state);
+    const verify = h.document.querySelector(
+      'a[href="/connect/apple?service=findmy"]',
+    );
+    assert.equal(verify?.textContent, "验证查找");
   } finally {
     h.ui.destroy();
   }

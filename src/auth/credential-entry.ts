@@ -12,6 +12,7 @@ type Status = {
 };
 const element = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
+const findMy = document.querySelector("[data-findmy-verification]") !== null;
 const form = element<HTMLFormElement>("credentials"),
   fields = element<HTMLFieldSetElement>("fields"),
   verification = element<HTMLFormElement>("verification");
@@ -117,7 +118,9 @@ function update(value: BrowserSignInUpdate) {
     };
     announce(
       (value.code ? value.code + "：" : "") +
-        (hints[value.code ?? ""] ?? "登录未完成，请重新发起。") +
+        (findMy && value.code === "REAUTH_REQUIRED"
+          ? "查找验证或设备列表读取未通过，原凭证保留。请查看详情，勿连续重试。"
+          : (hints[value.code ?? ""] ?? "登录未完成，请重新发起。")) +
         "\n详情：" +
         value.message,
       true,
@@ -127,6 +130,12 @@ function update(value: BrowserSignInUpdate) {
     stop();
     form.hidden = true;
     back.hidden = false;
+    if (findMy) {
+      announce(
+        "查找密码验证完成，设备列表已实际读取成功。返回管理页检查查找连接。",
+      );
+      return;
+    }
     announce(
       `账户与设备验证完成，网页会话已加密保存，${value.result.expiresAt === null ? "本地永久保留；Apple 仍可能要求重新验证" : "最晚于 " + new Date(value.result.expiresAt).toLocaleString("zh-CN") + " 到期"}。返回管理页逐项申请提醒事项、备忘录、照片和云盘的数据授权。`,
     );
@@ -162,6 +171,7 @@ form.addEventListener("submit", (event) => {
           appleTrust: trust.checked,
           persistentSession: retention.checked,
           region: region.value === "cn" ? "cn" : "international",
+          ...(findMy ? { service: "findmy" as const } : {}),
         },
         status.generation,
         (value) => {

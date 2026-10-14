@@ -458,6 +458,15 @@ export function mountAdmin(
       result.hidden = true;
       card.appendChild(result);
       actions.appendChild(check);
+      if (s.service === "findmy" && s.credentialAvailable) {
+        const verify = doc.createElement("a");
+        verify.className = "button secondary";
+        verify.href = "/connect/apple?service=findmy";
+        verify.textContent = "验证查找";
+        verify.title =
+          "再次验证 Apple 主密码，并实际读取设备列表；失败时保留现有凭证";
+        actions.appendChild(verify);
+      }
       card.appendChild(actions);
       el("services").appendChild(card);
     }

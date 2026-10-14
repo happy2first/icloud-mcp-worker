@@ -63,18 +63,21 @@ export class AppleSignInFlow {
   readonly persist: (session: AppleSession, result: PcsResult) => Promise<void>;
   readonly connect?: PushConnector;
   readonly thirtyDays?: boolean;
+  readonly reauthenticateAccount?: string;
   constructor(
     http: AppleAuthHTTP,
     signal: AbortSignal,
     persist: (session: AppleSession, result: PcsResult) => Promise<void>,
     connect?: PushConnector,
     thirtyDays?: boolean,
+    reauthenticateAccount?: string,
   ) {
     this.http = http;
     this.signal = signal;
     this.persist = persist;
     this.connect = connect;
     this.thirtyDays = thirtyDays;
+    this.reauthenticateAccount = reauthenticateAccount;
   }
   private alive(revision: number) {
     if (this.signal.aborted || revision !== this.revision)
@@ -157,7 +160,11 @@ export class AppleSignInFlow {
               m1: input.m1,
               m2: input.m2,
               rememberMe: true,
-              trustTokens: [],
+              trustTokens:
+                this.reauthenticateAccount &&
+                this.http.value("X-Apple-TwoSV-Trust-Token")
+                  ? [this.http.value("X-Apple-TwoSV-Trust-Token")]
+                  : [],
             },
           );
           this.http.expect(reply, [200, 204, 409]);
@@ -166,6 +173,34 @@ export class AppleSignInFlow {
           // factor result. Apple may include challenge-specific service errors.
           this.accountName = "";
           this.challenge = null;
+          if (this.reauthenticateAccount && [200, 204].includes(reply.status)) {
+            requireNoAppleRejection(reply.body);
+            const connection = await this.http.accountLogin(
+              this.reauthenticateAccount,
+            );
+            this.alive(revision);
+            const result: PcsResult = {
+              state: "READY",
+              checkpoint: freshPcsCheckpoint(),
+            };
+            await this.persist(
+              {
+                auth: this.http.snapshot(),
+                connection,
+                pcs: result.checkpoint,
+                login: loginAssurance(Date.now(), this.thirtyDays),
+              },
+              result,
+            );
+            this.alive(revision);
+            this.phase = "done";
+            return {
+              type: "complete",
+              state: "READY",
+              nextAttemptAt: 0,
+              expiresAt: null,
+            };
+          }
           if (reply.status !== 409)
             throw new AppError(
               "UNSUPPORTED_AUTH",
@@ -260,7 +295,7 @@ export class AppleSignInFlow {
     this.http.expect(trust, [200, 204]);
     this.alive(revision);
     requireNoAppleRejection(trust.body);
-    const connection = await this.http.accountLogin();
+    const connection = await this.http.accountLogin(this.reauthenticateAccount);
     this.alive(revision);
     // Account authentication must not depend on one service's PCS availability.
     // Persist verified web credentials first; each service is authorized explicitly in /admin.

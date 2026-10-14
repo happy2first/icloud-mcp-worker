@@ -492,6 +492,26 @@ try {
   });
   assert.equal(fmipLocation.result.structuredContent.location.isOld, true);
   assert.equal(fmipLocation.result.structuredContent.refreshAccepted, false);
+  const beforeSecondary = await repo.load();
+  const beforeSecondaryCalls = calls.length;
+  const isolated = await request(
+    `/api/auth/socket?generation=${beforeSecondary.fence.generation}&service=findmy`,
+    undefined,
+    {
+      upgrade: "websocket",
+      origin,
+      "sec-websocket-protocol": "reminders-auth-v2",
+    },
+  );
+  assert.equal(isolated.status, 101, String(isolated.status));
+  assert.deepEqual((await repo.load()).session, beforeSecondary.session);
+  assert.equal(
+    (await repo.load()).fence.generation,
+    beforeSecondary.fence.generation,
+  );
+  isolated.webSocket.accept();
+  isolated.webSocket.close(1000, "Cancel secondary verification");
+  assert.equal(calls.length, beforeSecondaryCalls);
   const findmyCheck = await request("/api/admin/check", { service: "findmy" });
   assert.equal(findmyCheck.status, 200, await findmyCheck.clone().text());
   assert.equal((await findmyCheck.json()).liveReadPassed, true);

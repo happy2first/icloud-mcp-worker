@@ -160,6 +160,77 @@ const accountReply = {
     ckdatabasews: { url: "https://p123-ckdatabasews.icloud.com" },
   },
 };
+test("Find My reauthentication accepts a trusted password proof, verifies the same account, and propagates live-read failure", async () => {
+  const initial = scriptedHTTP([
+    { status: 200 },
+    { body: challenge },
+    { status: 200, headers: authenticatedHeaders },
+  ]);
+  let initialPersisted = false;
+  const initialFlow = new AppleSignInFlow(
+    initial.http,
+    new AbortController().signal,
+    async () => {
+      initialPersisted = true;
+    },
+  );
+  await initialFlow.start(startMessage);
+  await assert.rejects(
+    initialFlow.advance(proofMessage),
+    (error: any) => error.code === "UNSUPPORTED_AUTH",
+  );
+  assert.equal(initialPersisted, false);
+  for (const status of [200, 204]) {
+    const { http } = scriptedHTTP([
+      { status: 200 },
+      { body: challenge },
+      { status, headers: authenticatedHeaders },
+      { body: accountReply },
+    ]);
+    let committed = false;
+    const flow = new AppleSignInFlow(
+      http,
+      new AbortController().signal,
+      async (session) => {
+        assert.equal(session.connection.dsid, "123456789");
+        committed = true;
+      },
+      undefined,
+      undefined,
+      "123456789",
+    );
+    await flow.start(startMessage);
+    assert.equal((await flow.advance(proofMessage)).type, "complete");
+    assert.equal(committed, true);
+  }
+  for (const wrongAccount of [true, false]) {
+    const { http } = scriptedHTTP([
+      { status: 200 },
+      { body: challenge },
+      { status: 200, headers: authenticatedHeaders },
+      {
+        body: {
+          ...accountReply,
+          dsInfo: { dsid: wrongAccount ? "999" : "123456789" },
+        },
+      },
+    ]);
+    let persisted = false;
+    const flow = new AppleSignInFlow(
+      http,
+      new AbortController().signal,
+      async () => {
+        throw new Error("live device listing rejected");
+      },
+      undefined,
+      undefined,
+      "123456789",
+    );
+    await flow.start(startMessage);
+    await assert.rejects(flow.advance(proofMessage));
+    assert.equal(persisted, false);
+  }
+});
 const bootHTML = (value: unknown) =>
   `<html><script class="boot_args">${JSON.stringify(value)}</script></html>`;
 const hsa2Prefix = (htmlBoot: unknown, jsonBoot: unknown = {}) => [

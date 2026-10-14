@@ -5,6 +5,9 @@ import { AppleSessionRepository } from "../persistence/apple-sessions.ts";
 import { requireAppleEnabled } from "./gates.ts";
 import { AppleAuthHTTP } from "./apple/http.ts";
 import { AppleSignInFlow } from "./apple/flow.ts";
+import { requireCurrentLogin } from "./apple/policy.ts";
+import { FindMyClient } from "../services/findmy.ts";
+import { WebClient } from "../services/web.ts";
 import {
   APPLE_AUTH_PROTOCOL,
   AUTH_LIFETIME_MS,
@@ -44,11 +47,17 @@ export async function appleAuthSocket(
     );
   const query = new URL(request.url).searchParams;
   const generation = query.get("generation") ?? "";
+  const findMy = query.get("service") === "findmy";
   if (
-    query.size !== (query.has("region") ? 2 : 1) ||
+    query.size !==
+      1 + Number(query.has("region")) + Number(query.has("service")) ||
     query.getAll("generation").length !== 1 ||
     query.getAll("region").length > 1 ||
-    [...query.keys()].some((key) => !["generation", "region"].includes(key)) ||
+    query.getAll("service").length > 1 ||
+    (query.has("service") && !findMy) ||
+    [...query.keys()].some(
+      (key) => !["generation", "region", "service"].includes(key),
+    ) ||
     (query.has("region") &&
       !["cn", "international"].includes(query.get("region")!)) ||
     !/^(0|[1-9][0-9]{0,15})$/.test(generation) ||
@@ -59,7 +68,24 @@ export async function appleAuthSocket(
       "Refresh connection status before starting sign-in.",
     );
   const repository = new AppleSessionRepository(env, owner);
-  const fence = await repository.begin(Number(generation));
+  const existing = findMy ? await repository.load() : null;
+  if (existing) {
+    requireCurrentLogin(existing.session.login);
+    if (existing.fence.generation !== Number(generation))
+      throw new AppError(
+        "CONFLICT",
+        "The saved Apple account changed; reopen Find My verification.",
+        409,
+      );
+  }
+  // Reauthentication is isolated: never begin()/replace the working account.
+  const fence = existing
+    ? {
+        transactionId: crypto.randomUUID(),
+        generation: existing.fence.generation + 1,
+        expiresAt: Date.now() + AUTH_LIFETIME_MS,
+      }
+    : await repository.begin(Number(generation));
   const [client, server] = Object.values(new WebSocketPair());
   const abort = new AbortController();
   const nonce = hex(crypto.getRandomValues(new Uint8Array(32)));
@@ -79,12 +105,14 @@ export async function appleAuthSocket(
     );
   const closed = () => phase === "closed";
   const flow = new AppleSignInFlow(
-    new AppleAuthHTTP(
-      undefined,
-      undefined,
-      abort.signal,
-      query.get("region") === "cn" ? "cn" : "international",
-    ),
+    existing
+      ? AppleAuthHTTP.restore(existing.session.auth, fetch, abort.signal)
+      : new AppleAuthHTTP(
+          undefined,
+          undefined,
+          abort.signal,
+          query.get("region") === "cn" ? "cn" : "international",
+        ),
     abort.signal,
     async (session, result) => {
       if (abort.signal.aborted || closed())
@@ -93,13 +121,73 @@ export async function appleAuthSocket(
           "The connection was lost. Restart sign-in.",
           409,
         );
+      if (existing) {
+        const current = await repository.load();
+        requireCurrentLogin(current.session.login);
+        if (
+          current.fence.generation !== existing.fence.generation ||
+          session.connection.dsid !== current.session.connection.dsid
+        )
+          throw new AppError(
+            "CONFLICT",
+            "Apple account changed during Find My verification. Original credentials preserved.",
+            409,
+          );
+        const writeFence = await repository.claimRenewal(
+          current.fence.generation,
+          current.fence.version,
+        );
+        try {
+          const candidate = {
+            ...current.session,
+            auth: session.auth,
+            connection: session.connection,
+          };
+          // A password proof is not proof of service access: perform the real read.
+          const verifiedHTTP = AppleAuthHTTP.restore(
+            candidate.auth,
+            fetch,
+            abort.signal,
+          );
+          await new FindMyClient(new WebClient(verifiedHTTP, candidate)).list();
+          if (abort.signal.aborted || closed())
+            throw new AppError(
+              "RESTART_REQUIRED",
+              "Find My verification was cancelled; original credentials preserved.",
+              409,
+            );
+          await repository.commitResume(
+            writeFence,
+            {
+              ...candidate,
+              auth: verifiedHTTP.snapshot(),
+              // Preserve retention and PCS metadata; no assurance deadline extension.
+              renewal: current.session.renewal
+                ? {
+                    ...current.session.renewal,
+                    lastAppleSuccessAt: Date.now(),
+                    findMyRecovery: undefined,
+                  }
+                : undefined,
+            },
+            current.state,
+            current.action ?? undefined,
+          );
+        } finally {
+          await repository.releaseResume(writeFence);
+        }
+        return;
+      }
       await repository.commit(
-        fence,
+        fence as Awaited<ReturnType<AppleSessionRepository["begin"]>>,
         session,
         result.state,
         result.state === "DEVICE_APPROVAL_PENDING" ? result.action : undefined,
       );
     },
+    undefined,
+    undefined,
+    existing?.session.connection.dsid,
   );
   const clean = () => {
     if (closed()) return;
@@ -108,10 +196,12 @@ export async function appleAuthSocket(
     clearTimeout(timer);
     abort.abort();
     flow.close();
-    if (!successful)
-      void repository.abandon(fence).catch(() => {
-        /* Lease expiry and fences still prevent stale writes. */
-      });
+    if (!successful && !existing)
+      void repository
+        .abandon(fence as Awaited<ReturnType<AppleSessionRepository["begin"]>>)
+        .catch(() => {
+          /* Lease expiry and fences still prevent stale writes. */
+        });
   };
   const finish = (code: number, reason: string) => {
     clean();

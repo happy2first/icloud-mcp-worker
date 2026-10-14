@@ -50,7 +50,7 @@ export class FindMySignInRequired extends AppError {
     super(
       "REAUTH_REQUIRED",
       diagnostic +
-        " Find My rejected this web session. If it was just verified, do not repeat sign-in: HTTP 450 alone cannot identify the cause; inspect cookieContext and responseFormat. App-specific passwords cannot authenticate Find My. Other iCloud credentials were preserved; no token exchange or automatic replay was performed.",
+        " Find My rejected this web session. Complete the separate Find My password verification at /connect/apple?service=findmy (Verify Find My in /admin); do not repeatedly reconnect the whole account. HTTP 450 alone cannot identify the cause; inspect cookieContext and responseFormat. App-specific passwords cannot authenticate Find My. Other iCloud credentials were preserved; no token exchange or automatic replay was performed.",
       409,
     );
   }
@@ -79,7 +79,7 @@ export async function webOperation<T>(
       fmipRecovery.code,
       fmipRecovery.message +
         (fmipRecovery.nextRetryAt === null
-          ? " Find My remains blocked for this session; no Apple request made on this attempt. Inspect the diagnostic before repeating sign-in."
+          ? " Find My remains blocked for this session; no Apple request made on this attempt. Use /connect/apple?service=findmy for separate password verification; do not repeatedly reconnect the whole account."
           : " Cached Find My recovery failure; no Apple request made on this attempt. Wait before retrying."),
       409,
     );

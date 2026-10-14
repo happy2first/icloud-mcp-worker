@@ -14,7 +14,12 @@ export type BrowserSignInUpdate =
 export function beginAppleSignIn(
   accountName: string,
   initialPassword: string,
-  consent: { appleTrust: boolean; persistentSession: boolean; region?: "cn" | "international" },
+  consent: {
+    appleTrust: boolean;
+    persistentSession: boolean;
+    region?: "cn" | "international";
+    service?: "findmy";
+  },
   generation: number,
   update: (value: BrowserSignInUpdate) => void,
 ) {
@@ -40,6 +45,7 @@ export function beginAppleSignIn(
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("generation", String(generation));
   url.searchParams.set("region", consent.region ?? "international");
+  if (consent.service === "findmy") url.searchParams.set("service", "findmy");
   const socket = new WebSocket(url, APPLE_AUTH_PROTOCOL);
   const events = new AuthResponseSequence(generation);
   let binding: { transactionId: string; nonce: string } | null = null;
