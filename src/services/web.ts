@@ -19,6 +19,17 @@ import { appleWebHeaders } from "../transport/apple-http.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
 import { requireAppleEnabled } from "../auth/gates.ts";
 export type PcsService = "notes3" | "photos" | "iclouddrive";
+// pyicloud treats FMIP 450 as full sign-in, not a saved-token exchange.
+export class FindMySignInRequired extends AppError {
+  constructor(diagnostic: string) {
+    super(
+      "REAUTH_REQUIRED",
+      diagnostic +
+        " Find My requires a fresh Apple web sign-in. In /admin, expand Apple web login, sign in and complete device verification, then check Find My. App-specific passwords cannot authenticate Find My. Other iCloud credentials were preserved; no token exchange or automatic replay was performed.",
+      409,
+    );
+  }
+}
 export async function webOperation<T>(
   env: RuntimeEnv,
   owner: string,
@@ -33,13 +44,15 @@ export async function webOperation<T>(
   const fmipRecovery = initial.session.renewal?.findMyRecovery;
   if (
     service === "fmip" &&
-    fmipRecovery?.nextRetryAt &&
-    Date.now() < fmipRecovery.nextRetryAt
+    fmipRecovery &&
+    (fmipRecovery.nextRetryAt === null || Date.now() < fmipRecovery.nextRetryAt)
   )
     throw new AppError(
       fmipRecovery.code,
       fmipRecovery.message +
-        " Cached Find My recovery failure; no Apple request made on this attempt. Wait before retrying.",
+        (fmipRecovery.nextRetryAt === null
+          ? " Find My is waiting for a new Apple web sign-in; no Apple request made on this attempt."
+          : " Cached Find My recovery failure; no Apple request made on this attempt. Wait before retrying."),
       409,
     );
   const renewal = new AppleSessionRenewal(env, repo);
@@ -142,6 +155,7 @@ export async function webOperation<T>(
       if (
         e instanceof AppError &&
         e.code === "REAUTH_REQUIRED" &&
+        !(e instanceof FindMySignInRequired) &&
         replaySafe &&
         attempt === 0 &&
         !budget.recoveryUsed &&
@@ -174,7 +188,10 @@ export async function webOperation<T>(
             renewal: {
               ...(saved.session.renewal ?? renewalCheckpoint()),
               findMyRecovery: {
-                nextRetryAt: Date.now() + 30_000,
+                nextRetryAt:
+                  e instanceof FindMySignInRequired
+                    ? null
+                    : Date.now() + 30_000,
                 code: e.code,
                 message: e.message.slice(0, 2000),
               },
@@ -234,7 +251,8 @@ export async function webOperation<T>(
       if (
         service === "fmip" &&
         e instanceof AppError &&
-        e.code === "REAUTH_REQUIRED"
+        e.code === "REAUTH_REQUIRED" &&
+        !(e instanceof FindMySignInRequired)
       )
         throw new AppError(
           "REAUTH_REQUIRED",
@@ -308,6 +326,25 @@ export class WebClient {
       method: payload === undefined ? "GET" : "POST",
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
     });
+    // Inspect only known flags, never return Apple's raw body, cookies or tokens.
+    let fmipBody: any;
+    if (service === "fmip") {
+      try {
+        fmipBody = JSON.parse(new TextDecoder().decode(r.bytes));
+      } catch {
+        // Non-JSON auth errors still carry an actionable HTTP status.
+      }
+      const diagnostic = `Apple fmip ${url.pathname} (${this.auth.region}; host=${url.hostname}): HTTP ${r.status}; statusCode=${["200", "203", "401", "403", "421", "450"].includes(String(fmipBody?.statusCode)) ? fmipBody.statusCode : "missing-or-unrecognized"}; termsUpdateNeeded=${fmipBody?.termsUpdateNeeded === true ? "true" : fmipBody?.termsUpdateNeeded === false ? "false" : "missing"}.`;
+      if (fmipBody?.termsUpdateNeeded === true)
+        throw new AppError(
+          "TERMS_ACTION_REQUIRED",
+          diagnostic +
+            " Review updated terms at the official iCloud website before checking Find My again. No terms were automatically accepted.",
+          409,
+        );
+      if (r.status === 450 || String(fmipBody?.statusCode) === "450")
+        throw new FindMySignInRequired(diagnostic);
+    }
     if ([401, 421, 450].includes(r.status))
       throw new AppError(
         "REAUTH_REQUIRED",

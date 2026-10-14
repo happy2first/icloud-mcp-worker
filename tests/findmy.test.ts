@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FindMyClient } from "../src/services/findmy.ts";
-import { WebClient } from "../src/services/web.ts";
+import { WebClient, FindMySignInRequired } from "../src/services/web.ts";
 import { AppleAuthHTTP } from "../src/auth/apple/http.ts";
 import { AppleHTTP, validatedAppleURL } from "../src/transport/apple-http.ts";
 import { AppError } from "../src/errors.ts";
@@ -233,4 +233,51 @@ test("real HTTP adapter sends saved Apple cookie and surfaces auth rejection", a
     new FindMyClient(web).list(),
     (e: any) => e.code === "REAUTH_REQUIRED",
   );
+});
+
+test("FMIP 450 requires full web sign-in while explicit terms take precedence", async () => {
+  for (const [status, response, code] of [
+    [450, {}, "REAUTH_REQUIRED"],
+    [200, { statusCode: "450" }, "REAUTH_REQUIRED"],
+    [450, { termsUpdateNeeded: true }, "TERMS_ACTION_REQUIRED"],
+    [
+      200,
+      { statusCode: "450", termsUpdateNeeded: true },
+      "TERMS_ACTION_REQUIRED",
+    ],
+    [421, {}, "REAUTH_REQUIRED"],
+  ] as const) {
+    let calls = 0;
+    const auth = new AppleAuthHTTP(
+      new AppleHTTP(undefined, async () => {
+        calls++;
+        return Response.json(response, { status });
+      }),
+    );
+    const web = new WebClient(auth, {
+      connection: {
+        dsid: "1",
+        clientId: "test",
+        clientBuildNumber: "1",
+        clientMasteringNumber: "1",
+        services: { fmip: "https://p12-fmipweb.icloud.com" },
+      },
+    } as any);
+    await assert.rejects(new FindMyClient(web).list(), (error: any) => {
+      assert.equal(error.code, code);
+      assert.equal(
+        error instanceof FindMySignInRequired,
+        code === "REAUTH_REQUIRED" && status !== 421,
+      );
+      if (error instanceof FindMySignInRequired) {
+        assert.match(
+          error.message,
+          /App-specific passwords cannot authenticate Find My/,
+        );
+        assert.match(error.message, /fresh Apple web sign-in/);
+      }
+      return true;
+    });
+    assert.equal(calls, 1);
+  }
 });

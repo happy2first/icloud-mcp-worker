@@ -22,6 +22,7 @@ const sign = (sub) =>
     .setExpirationTime("5m")
     .sign(privateKey);
 const calls = [];
+let findMyRequiresSignIn = false;
 const mfEnvKey = randomBytes(32).toString("base64");
 const mf = new Miniflare({
   modules: true,
@@ -54,6 +55,8 @@ const mf = new Miniflare({
         headers: { "content-type": "text/plain" },
       });
     if (u.hostname === "p12-fmipweb.icloud.com") {
+      if (findMyRequiresSignIn)
+        return Response.json({ statusCode: "450" }, { status: 450 });
       const payload = JSON.parse(calls.at(-1).body);
       assert.equal(payload.clientContext.fmly, true);
       return Response.json({
@@ -458,6 +461,47 @@ try {
       .state,
     "ok",
   );
+  // A full-login FMIP rejection must not exchange tokens, repeat Apple's
+  // request on the next call, or revoke credentials used by other services.
+  const beforeRejectedSession = await repo.load();
+  const beforeRejectedCalls = calls.length;
+  findMyRequiresSignIn = true;
+  const rejectedFindMy = await mcp("tools/call", {
+    name: "findmy_list_devices",
+    arguments: {},
+  });
+  assert.equal(
+    rejectedFindMy.result.structuredContent.error.code,
+    "REAUTH_REQUIRED",
+  );
+  assert.match(
+    rejectedFindMy.result.structuredContent.error.message,
+    /fresh Apple web sign-in/,
+  );
+  assert.equal(calls.length - beforeRejectedCalls, 1);
+  const afterRejectedSession = await repo.load();
+  assert.deepEqual(
+    afterRejectedSession.session.auth,
+    beforeRejectedSession.session.auth,
+  );
+  assert.equal(
+    afterRejectedSession.fence.generation,
+    beforeRejectedSession.fence.generation,
+  );
+  assert.equal(
+    afterRejectedSession.session.renewal.findMyRecovery.nextRetryAt,
+    null,
+  );
+  const cachedFindMy = await mcp("tools/call", {
+    name: "findmy_list_devices",
+    arguments: {},
+  });
+  assert.equal(
+    cachedFindMy.result.structuredContent.error.code,
+    "REAUTH_REQUIRED",
+  );
+  assert.equal(calls.length - beforeRejectedCalls, 1);
+  findMyRequiresSignIn = false;
   await request("/api/admin/service", {
     service: "drive",
     enabled: true,
