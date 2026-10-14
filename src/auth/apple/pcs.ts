@@ -24,6 +24,31 @@ export const freshPcsCheckpoint = (now = Date.now()): PcsCheckpoint => ({
   nextAttemptAt: 0,
 });
 
+export function webAccessRequiresPcs(state: any): boolean {
+  requireNoAppleRejection(state, "requestWebAccessState");
+  if (
+    state?.hsaChallengeRequired === true ||
+    state?.hsaTrustedBrowser === false
+  )
+    throw new AppError(
+      "VERIFICATION_REQUIRED",
+      "Apple requestWebAccessState explicitly requires device verification or rejects browser trust. Saved credentials preserved.",
+      409,
+    );
+  if (
+    !state ||
+    (state.isICDRSDisabled !== undefined &&
+      typeof state.isICDRSDisabled !== "boolean") ||
+    (state.isDeviceConsentedForPCS !== undefined &&
+      typeof state.isDeviceConsentedForPCS !== "boolean")
+  )
+    throw new AppError(
+      "PROTOCOL_CHANGED",
+      "Apple requestWebAccessState returned invalid authorization flags.",
+    );
+  return state.isICDRSDisabled === true;
+}
+
 // Each call makes at most two HTTP requests. Waiting belongs to a later owner
 // request, not a sleeping Worker or background retry loop.
 export async function advancePcs(
@@ -56,31 +81,10 @@ export async function advancePcs(
   const consent = await http.setup("/requestWebAccessState", undefined, dsid);
   http.expect(consent, [200], "requestWebAccessState");
   checkpoint.consentChecks++;
-  const state = consent.body;
-  requireNoAppleRejection(state, "requestWebAccessState");
-  if (
-    state?.hsaChallengeRequired === true ||
-    state?.hsaTrustedBrowser === false
-  )
-    throw new AppError(
-      "VERIFICATION_REQUIRED",
-      "Apple requestWebAccessState explicitly requires device verification or rejects browser trust. Saved credentials preserved.",
-      409,
-    );
-  if (
-    !state ||
-    (state.isICDRSDisabled !== undefined &&
-      typeof state.isICDRSDisabled !== "boolean") ||
-    (state.isDeviceConsentedForPCS !== undefined &&
-      typeof state.isDeviceConsentedForPCS !== "boolean")
-  )
-    throw new AppError(
-      "PROTOCOL_CHANGED",
-      "Apple requestWebAccessState returned invalid authorization flags.",
-    );
+  const state = consent.body!;
   // Match pyicloud's optional-field defaults. READY here only completes the
   // preparation step; /admin still performs a real service read before success.
-  if (state.isICDRSDisabled !== true) return { state: "READY", checkpoint };
+  if (!webAccessRequiresPcs(state)) return { state: "READY", checkpoint };
   if (state.isDeviceConsentedForPCS === false) {
     if (!checkpoint.consentRequested) {
       const request = await http.setup(

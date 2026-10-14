@@ -77,3 +77,11 @@ pyicloud 的 requestWebAccessState 允许省略 isICDRSDisabled 和 isDeviceCons
 - 原来的笼统归属错误现补充 record-zone 或 relationship=List/ParentReminder 上下文，不输出真实 owner ID、查询游标或事项内容。若真实失败来自主记录或必需关系，此补丁继续拒绝，不宣称绕过即可安全使用。
 - 本地覆盖未使用的跨归属关联字段可读取所属事项、必要关系跨归属拒绝、主记录跨归属拒绝。修复是否覆盖实际第 16 页的字段需新部署后 MCP 验证。
 - 203 项测试、类型检查、构建和本地 workerd 通过，包含共享区校验维持严格的回归测试。
+
+## 全工具检查发现的后续问题
+
+- 新部署后的常规提醒错误明确为 relationship=unused-reference / recordType=RecurrenceRule。将未消费字段的处理扩展到普通私有复合关联记录，保留其顶层 owner 与实际消费的关系校验，显式共享区仍保持严格。
+- 真实日历查询返回 HTTP 400，发现 REPORT 的 c:filter 缺少闭合标签，已修正并以 XMLValidator 回归校验。
+- 真实 notes_list / notes_folders / notes_search / photos_albums / photos_query / drive_browse 在发出数据请求前被 servicePcs.ready=false 阻断。MCP 只读访问现在先读取 Apple requestWebAccessState；关闭数据保护或按 pyicloud 缺字段默认无需 PCS 时允许真实数据请求，并在成功后保存准备状态。Apple 明确需要 PCS 时仍停止；不会发送设备批准通知或 requestPCS。
+- 实测成功：两个状态工具、日历/通讯录目录发现、通讯录查询与单条读取、提醒列表发现与单条读取。全清单汇总保留 26 条并明确不完整；查找一次 Token 交换后仍返回 HTTP 450。不能把目录发现成功等同于所有工具可用。
+- 九个主动工具仅做缺少参数/确认时的拒绝测试：calendar_create/update、contacts_create/update、create/update/complete/reopen_reminder、findmy_play_sound。未写入真实账户或播放声音。依赖照片、笔记、云盘和设备有效 ID 的后续工具在目录读取阻断时不能声称完成真实数据测试。

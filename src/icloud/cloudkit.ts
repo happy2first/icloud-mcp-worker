@@ -759,11 +759,7 @@ function parseRecord(
     // Only List and ParentReminder are traversed/normalized by this client.
     // An unused opaque relationship may refer to another user's metadata; it
     // grants no access and must not invalidate an otherwise owned reminder.
-    if (
-      allowDefaultOwner &&
-      type === "Reminder" &&
-      !["List", "ParentReminder"].includes(key)
-    )
+    if (allowDefaultOwner && !["List", "ParentReminder"].includes(key))
       continue;
     if (
       field !== null &&

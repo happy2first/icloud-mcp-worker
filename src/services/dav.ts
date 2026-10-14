@@ -28,10 +28,17 @@ export const xml = (s: string) =>
 // With attributes enabled, <href xmlns="DAV:">...</href> is an object,
 // while <d:href>...</d:href> is a string. Never stringify it as [object Object].
 function hrefText(value: unknown): string {
-  const text = typeof value === "string" ? value :
-    value && typeof value === "object" && "#text" in value ? (value as any)["#text"] : undefined;
+  const text =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object" && "#text" in value
+        ? (value as any)["#text"]
+        : undefined;
   if (typeof text !== "string" || !text.trim())
-    throw new AppError("PROTOCOL_CHANGED", "DAV response omitted a valid resource href.");
+    throw new AppError(
+      "PROTOCOL_CHANGED",
+      "DAV response omitted a valid resource href.",
+    );
   return text.trim();
 }
 export function davURL(value: string, kind: DavKind) {
@@ -39,7 +46,10 @@ export function davURL(value: string, kind: DavKind) {
   try {
     u = new URL(value.trim());
   } catch {
-    throw new AppError("VALIDATION_ERROR", "DAV resource address is malformed.");
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "DAV resource address is malformed.",
+    );
   }
   const host =
     kind === "calendar"
@@ -124,7 +134,11 @@ export class DavClient {
     try {
       for (let hop = 0; hop < 4; hop++) {
         if (visited.has(url.href))
-          throw new AppError("APPLE_REDIRECT_ERROR", `DAV ${this.kind} ${method}: redirect loop.`, 409);
+          throw new AppError(
+            "APPLE_REDIRECT_ERROR",
+            `DAV ${this.kind} ${method}: redirect loop.`,
+            409,
+          );
         visited.add(url.href);
         const r = await this.send.call(globalThis, url, {
           method,
@@ -174,13 +188,18 @@ export class DavClient {
         // A numbered CardDAV host may fail Cloudflare DNS routing (HTTP 530).
         // The fixed entry host also routes account paths. Keep the exact path
         // and region; never guess a partition or retry a mutation.
-        if (r.status === 530 && this.kind === "contacts" &&
+        if (
+          r.status === 530 &&
+          this.kind === "contacts" &&
           ["PROPFIND", "REPORT", "GET"].includes(method) &&
           /^p\d{1,3}-contacts\.icloud\.com(?:\.cn)?$/.test(url.hostname) &&
-          !usedContactsRouteFallback && hop < 3) {
+          !usedContactsRouteFallback &&
+          hop < 3
+        ) {
           const entry = new URL(url);
           entry.hostname = url.hostname.endsWith(".com.cn")
-            ? "contacts.icloud.com.cn" : "contacts.icloud.com";
+            ? "contacts.icloud.com.cn"
+            : "contacts.icloud.com";
           if (!visited.has(entry.href)) {
             usedContactsRouteFallback = true;
             await r.body?.cancel();
@@ -228,10 +247,10 @@ export class DavClient {
     let r;
     try {
       r = await this.request(
-      url,
-      "PROPFIND",
-      `<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:a="urn:ietf:params:xml:ns:carddav"><d:prop>${props}</d:prop></d:propfind>`,
-      { Depth: depth },
+        url,
+        "PROPFIND",
+        `<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:a="urn:ietf:params:xml:ns:carddav"><d:prop>${props}</d:prop></d:propfind>`,
+        { Depth: depth },
       );
     } catch (e) {
       if (e instanceof AppError)
@@ -248,7 +267,12 @@ export class DavClient {
     const signal = this.signal
       ? AbortSignal.any([this.signal, AbortSignal.timeout(40000)])
       : AbortSignal.timeout(40000);
-    return new DavClient(this.kind, this.credentials, this.send, signal).discoverWithinBudget();
+    return new DavClient(
+      this.kind,
+      this.credentials,
+      this.send,
+      signal,
+    ).discoverWithinBudget();
   }
   private async discoverWithinBudget() {
     const root =
@@ -257,13 +281,30 @@ export class DavClient {
         : "https://contacts.icloud.com/";
     let principal;
     try {
-      principal = await this.propfind(root, "<d:current-user-principal/>", "0", "principal-entry");
+      principal = await this.propfind(
+        root,
+        "<d:current-user-principal/>",
+        "0",
+        "principal-entry",
+      );
     } catch (e) {
       // Chinese CardDAV accounts may require the regional bootstrap directly.
       // Do not retry writes, protocol errors, rate limits or arbitrary endpoints.
-      if (!(e instanceof AppError) || !["REAUTH_REQUIRED", "FORBIDDEN", "UPSTREAM_UNAVAILABLE"].includes(e.code) || this.signal?.aborted) throw e;
+      if (
+        !(e instanceof AppError) ||
+        !["REAUTH_REQUIRED", "FORBIDDEN", "UPSTREAM_UNAVAILABLE"].includes(
+          e.code,
+        ) ||
+        this.signal?.aborted
+      )
+        throw e;
       try {
-        principal = await this.propfind(root.replace(".com/", ".com.cn/"), "<d:current-user-principal/>", "0", "regional-principal-entry");
+        principal = await this.propfind(
+          root.replace(".com/", ".com.cn/"),
+          "<d:current-user-principal/>",
+          "0",
+          "regional-principal-entry",
+        );
       } catch (regional) {
         // Do not hide the first failure behind an unrelated regional DNS error.
         if (regional instanceof AppError)
@@ -271,7 +312,9 @@ export class DavClient {
         throw regional;
       }
     }
-    const principalRecord = principal.find((x: any) => x.props["current-user-principal"]?.href);
+    const principalRecord = principal.find(
+      (x: any) => x.props["current-user-principal"]?.href,
+    );
     const href = principalRecord?.props["current-user-principal"]?.href;
     if (!href)
       throw new AppError("PROTOCOL_CHANGED", "Apple omitted DAV principal.");
@@ -280,9 +323,11 @@ export class DavClient {
       this.kind === "calendar"
         ? "<c:calendar-home-set/>"
         : "<a:addressbook-home-set/>",
-      "0", "home-set",
+      "0",
+      "home-set",
     );
-    const homeProperty = this.kind === "calendar" ? "calendar-home-set" : "addressbook-home-set";
+    const homeProperty =
+      this.kind === "calendar" ? "calendar-home-set" : "addressbook-home-set";
     const homeRecord = home.find((x: any) => x.props[homeProperty]?.href);
     const h = homeRecord?.props[homeProperty]?.href;
     if (!h)
@@ -316,7 +361,7 @@ export class DavClient {
         "Specify start and end UTC dates.",
       );
     const range = isCal
-      ? `<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${xml(start!)}" end="${xml(end!)}"/></c:comp-filter></c:comp-filter>`
+      ? `<c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VEVENT"><c:time-range start="${xml(start!)}" end="${xml(end!)}"/></c:comp-filter></c:comp-filter></c:filter>`
       : "<c:filter/>";
     const name = isCal ? "calendar" : "addressbook",
       dataName = isCal ? "calendar-data" : "address-data",
@@ -545,4 +590,3 @@ export function updateDavData(kind: DavKind, text: string, changes: any) {
   }
   return foldLines(output);
 }
-

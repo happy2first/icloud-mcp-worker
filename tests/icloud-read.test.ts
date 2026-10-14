@@ -819,6 +819,44 @@ test("unused opaque references do not invalidate an owned reminder or expose ref
   assert.ok(!("OpaqueMetadata" in result));
 });
 
+test("unused repeat-rule metadata does not block owned reminder pages", async () => {
+  const { api } = clientWith([
+    {
+      body: {
+        records: [
+          reminderRecord("Owned repeating item"),
+          {
+            recordName: "RecurrenceRule/RULE",
+            recordType: "RecurrenceRule",
+            zoneID: { zoneName: "Reminders", zoneType: "REGULAR_CUSTOM_ZONE" },
+            fields: {
+              OpaqueMetadata: {
+                type: "REFERENCE",
+                value: {
+                  recordName: "List/UNUSED-FOREIGN",
+                  zoneID: {
+                    zoneName: "Reminders",
+                    ownerRecordName: "_foreign-owner",
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    },
+  ]);
+  const page = await api.queryRemindersPage({
+    listId: "List/LIST-A",
+    includeCompleted: false,
+  });
+  assert.equal(page.records.length, 2);
+  assert.equal(
+    normalizeReminder(page.records[0] as any).title,
+    "Owned repeating item",
+  );
+});
+
 for (const key of ["List", "ParentReminder"] as const) {
   test(`consumed ${key} references still reject foreign owners with precise context`, async () => {
     const record = reminderRecord("Owned item");

@@ -9,7 +9,11 @@ import {
   appleSuccess,
   renewalCheckpoint,
 } from "../auth/apple/session-renewal.ts";
-import { advancePcs, freshPcsCheckpoint } from "../auth/apple/pcs.ts";
+import {
+  advancePcs,
+  freshPcsCheckpoint,
+  webAccessRequiresPcs,
+} from "../auth/apple/pcs.ts";
 import { AppError, UpstreamRateLimitedError } from "../errors.ts";
 import { appleWebHeaders } from "../transport/apple-http.ts";
 import type { RuntimeEnv } from "../platform/sites.ts";
@@ -103,12 +107,27 @@ export async function webOperation<T>(
           nextAttemptAt: result.checkpoint.nextAttemptAt,
         } as T;
       }
-      if (service !== "fmip" && !state?.ready)
-        throw new AppError(
-          "DEVICE_APPROVAL_PENDING",
-          `Open /admin and authorize ${service} PCS access.`,
-          409,
+      if (service !== "fmip" && !state?.ready) {
+        const access = await http.setup(
+          "/requestWebAccessState",
+          undefined,
+          session.connection.dsid,
         );
+        http.expect(access, [200], `requestWebAccessState (${service})`);
+        if (webAccessRequiresPcs(access.body))
+          throw new AppError(
+            "DEVICE_APPROVAL_PENDING",
+            `Apple requires PCS preparation for ${service}; complete it in /admin. No device-consent notification or PCS request was sent by this read.`,
+            409,
+          );
+        session = {
+          ...session,
+          servicePcs: {
+            ...session.servicePcs,
+            [service]: { ...freshPcsCheckpoint(), ready: true },
+          },
+        };
+      }
       const result = await run(
         new WebClient(http, session, saved.fence.generation),
       );

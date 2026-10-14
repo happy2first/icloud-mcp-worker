@@ -376,6 +376,68 @@ const acceptedAccount = (
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof AppError && error.code === code;
 
+for (const flags of [
+  {},
+  { isICDRSDisabled: false },
+  { isICDRSDisabled: true },
+  { isICDRSDisabled: "false" },
+  { hsaChallengeRequired: true },
+]) {
+  test(`MCP service reads check optional PCS requirements without notifying devices: ${JSON.stringify(flags)}`, async () => {
+    const db = new SQLiteD1(),
+      env = testEnv(db, key());
+    const repo = new AppleSessionRepository(env, owner);
+    const original = appleSession();
+    original.connection.services = {
+      drivews: "https://p123-drivews.icloud.com",
+    };
+    original.renewal = { ...renewalCheckpoint(), lastValidatedAt: Date.now() };
+    const fence = await repo.begin(0);
+    await repo.commit(fence, original, "READY");
+    const nativeFetch = globalThis.fetch;
+    const paths: string[] = [];
+    globalThis.fetch = async (value) => {
+      const path = new URL(String(value)).pathname;
+      paths.push(path);
+      if (path.endsWith("/requestWebAccessState")) return Response.json(flags);
+      assert.equal(path, "/retrieveItemDetailsInFolders");
+      return Response.json({ ok: true });
+    };
+    try {
+      const run = () =>
+        webOperation(env, owner, "iclouddrive", (w) =>
+          w.request("drivews", "/retrieveItemDetailsInFolders", {}),
+        );
+      const expected =
+        typeof flags.isICDRSDisabled === "string"
+          ? "PROTOCOL_CHANGED"
+          : flags.isICDRSDisabled === true
+            ? "DEVICE_APPROVAL_PENDING"
+            : flags.hsaChallengeRequired === true
+              ? "VERIFICATION_REQUIRED"
+              : null;
+      if (expected) await assert.rejects(run(), hasCode(expected));
+      else assert.deepEqual(await run(), { ok: true });
+      assert.deepEqual(
+        paths,
+        expected
+          ? ["/setup/ws/1/requestWebAccessState"]
+          : [
+              "/setup/ws/1/requestWebAccessState",
+              "/retrieveItemDetailsInFolders",
+            ],
+      );
+      assert.equal(
+        (await repo.load()).session.servicePcs?.iclouddrive?.ready ?? false,
+        !expected,
+      );
+    } finally {
+      globalThis.fetch = nativeFetch;
+      db.sqlite.close();
+    }
+  });
+}
+
 for (const mode of [
   "recovered",
   "still-rejected",
