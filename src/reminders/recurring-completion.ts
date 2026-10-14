@@ -297,7 +297,7 @@ export function planRecurringCompletion(
   )
     throw new AppError(
       "CONFLICT",
-      "Recurring completion requires exact owned list membership.",
+      `Recurring completion requires exact owned list membership: available=${members !== null}; count=${members?.length ?? "missing"}; unique=${members ? new Set(members).size : "missing"}; group=${normalizeList(list, false).isGroup}; deleted=${normalizeList(list, false).deleted}. No completion was dispatched.`,
       409,
     );
   const order = JSON.parse(value(list, "ReminderIDs")) as string[],
