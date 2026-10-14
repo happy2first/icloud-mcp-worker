@@ -691,13 +691,24 @@ function parseRecord(
   allowDefaultOwner = true,
 ): CloudKitRecordItem | CloudKitRecordError {
   const raw = object(value, "Apple returned a malformed CloudKit record.");
-  const recordZone = zoneID(
-    raw.zoneID,
-    true,
-    true,
-    expectedOwner,
-    allowDefaultOwner,
-  );
+  let recordZone: CloudKitZoneID | undefined;
+  try {
+    recordZone = zoneID(
+      raw.zoneID,
+      true,
+      true,
+      expectedOwner,
+      allowDefaultOwner,
+    );
+  } catch (error) {
+    if (error instanceof AppError && error.code === "PROTOCOL_CHANGED")
+      throw new AppError(
+        error.code,
+        error.message +
+          ` Context: record-zone; recordType=${typeof raw.recordType === "string" && RECORD_TYPES.has(raw.recordType) ? raw.recordType : "other"}; expectedOwner=${expectedOwner === DEFAULT_OWNER ? "default" : "explicit"}; returnedOwner=${(raw.zoneID as { ownerRecordName?: unknown } | undefined)?.ownerRecordName === DEFAULT_OWNER ? "default" : "explicit-or-missing"}.`,
+      );
+    throw error;
+  }
   if (typeof raw.serverErrorCode === "string") {
     return {
       recordName: typeof raw.recordName === "string" ? raw.recordName : null,
@@ -744,7 +755,16 @@ function parseRecord(
     raw.fields ?? {},
     "Apple returned malformed record fields.",
   );
-  for (const field of Object.values(fields)) {
+  for (const [key, field] of Object.entries(fields)) {
+    // Only List and ParentReminder are traversed/normalized by this client.
+    // An unused opaque relationship may refer to another user's metadata; it
+    // grants no access and must not invalidate an otherwise owned reminder.
+    if (
+      allowDefaultOwner &&
+      type === "Reminder" &&
+      !["List", "ParentReminder"].includes(key)
+    )
+      continue;
     if (
       field !== null &&
       typeof field === "object" &&
@@ -757,8 +777,25 @@ function parseRecord(
         value,
         "Apple returned a malformed record relationship.",
       );
-      if (reference.zoneID !== undefined)
-        zoneID(reference.zoneID, false, true, expectedOwner, allowDefaultOwner);
+      if (reference.zoneID !== undefined) {
+        try {
+          zoneID(
+            reference.zoneID,
+            false,
+            true,
+            expectedOwner,
+            allowDefaultOwner,
+          );
+        } catch (error) {
+          if (error instanceof AppError && error.code === "PROTOCOL_CHANGED")
+            throw new AppError(
+              error.code,
+              error.message +
+                ` Context: relationship=${["List", "ParentReminder"].includes(key) ? key : "unused-reference"}; recordType=${type}.`,
+            );
+          throw error;
+        }
+      }
     }
   }
   if (raw.recordChangeTag !== undefined)

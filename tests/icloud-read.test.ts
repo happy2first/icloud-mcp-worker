@@ -792,6 +792,74 @@ test("200-reminder compound pages accept related records but retain hard record 
   assert.equal(invalid.requests.length, 0);
 });
 
+test("unused opaque references do not invalidate an owned reminder or expose referenced data", async () => {
+  const record = reminderRecord("Owned item");
+  const fields = {
+    ...record.fields,
+    OpaqueMetadata: {
+      type: "REFERENCE",
+      value: {
+        recordName: "List/UNUSED-FOREIGN",
+        zoneID: { zoneName: "Reminders", ownerRecordName: "_foreign-owner" },
+      },
+    },
+  };
+  const { api, requests } = clientWith([
+    { body: { records: [{ ...record, fields }] } },
+  ]);
+  const page = await api.queryRemindersPage({
+    listId: "List/LIST-A",
+    includeCompleted: false,
+  });
+  assert.equal(page.records.length, 1);
+  const result = normalizeReminder(page.records[0] as any);
+  assert.equal(result.title, "Owned item");
+  assert.equal(result.listId, "List/LIST-A");
+  assert.equal(requests.length, 1);
+  assert.ok(!("OpaqueMetadata" in result));
+});
+
+for (const key of ["List", "ParentReminder"] as const) {
+  test(`consumed ${key} references still reject foreign owners with precise context`, async () => {
+    const record = reminderRecord("Owned item");
+    const { api } = clientWith([
+      {
+        body: {
+          records: [
+            {
+              ...record,
+              fields: {
+                ...record.fields,
+                [key]: {
+                  type: "REFERENCE",
+                  value: {
+                    recordName:
+                      key === "List" ? "List/LIST-A" : "Reminder/PARENT",
+                    zoneID: {
+                      zoneName: "Reminders",
+                      ownerRecordName: "_foreign-owner",
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    await assert.rejects(
+      api.queryRemindersPage({
+        listId: "List/LIST-A",
+        includeCompleted: false,
+      }),
+      (e: any) =>
+        e.code === "PROTOCOL_CHANGED" &&
+        e.message.includes(`relationship=${key}`) &&
+        !e.message.includes("_foreign-owner"),
+    );
+  });
+}
+
 test("zone ownership and record zone mismatches fail closed on direct reads", async () => {
   const wrongOwner = clientWith(
     [
