@@ -1119,7 +1119,7 @@ export class AppleConnectionService {
           const page = await client.queryRemindersPage({
             listId,
             includeCompleted: false,
-            limit: 200,
+            limit: 50,
             continuation: scan.cursor,
           });
           queried = true;

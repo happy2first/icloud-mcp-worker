@@ -149,6 +149,7 @@ export class AppleHTTP {
       allowAccountLogin302Body?: boolean;
       maxRedirects?: number;
       stage?: RequestStage;
+      timeoutMs?: number;
     } = {},
   ) {
     let url = validatedAppleURL(value, options.discovered);
@@ -173,7 +174,15 @@ export class AppleHTTP {
         409,
       );
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timeoutMs = options.timeoutMs ?? 8000;
+    requireValue(
+      Number.isSafeInteger(timeoutMs) &&
+        timeoutMs >= 1000 &&
+        timeoutMs <= 20_000,
+      "The Apple request timeout is outside the supported bounds.",
+    );
+    const startedAt = Date.now();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const cancelled = () => controller.abort();
     const signal = options.signal ?? this.signal;
     if (signal?.aborted) cancelled();
@@ -302,7 +311,7 @@ export class AppleHTTP {
       if (e instanceof AppError) throw e;
       throw new AppError(
         "UPSTREAM_UNAVAILABLE",
-        "Apple could not be reached within the request budget.",
+        `Apple ${stage} (${url.hostname}; endpoint=${["/records/query", "/records/lookup", "/zones/list", "/accountLogin", "/validate"].find((path) => url.pathname.endsWith(path)) ?? "other"}): ${controller.signal.aborted ? "request timed out or operation deadline reached" : "network request failed"}; elapsedMs=${Math.max(0, Date.now() - startedAt)}; requestTimeoutMs=${timeoutMs}. No automatic replay.`,
         503,
         true,
       );

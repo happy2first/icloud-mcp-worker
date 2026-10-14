@@ -61,3 +61,11 @@ pyicloud 的 requestWebAccessState 允许省略 isICDRSDisabled 和 isDeviceCons
 - 实测 icloud_status 为 READY，get_reminder_lists 成功读取 8 个列表，单独读取部分列表的事项成功。get_all_open_reminders 报 different CloudKit owner；单独查询“常规提醒”也复现相同错误。不是所有 MCP 查询失效，不能把该错误解释为设备批准未完成。
 - 全清单汇总现在保留此前已经成功读取的结果，遇到协议/不支持错误时返回 complete=false、具体失败 listId/message 和 retryable=false。失败清单游标不推进，继续读取不会误报全部完成。其他账户/区域所有权校验保持，尚未证明该清单错误来自共享清单或协议缺陷。
 - 本地回归覆盖后续清单归属校验失败仍保留前面的结果、失败清单不跳过、重读不误报完整。真实 MCP 的状态 schema 修正需部署后再次验证；没有声称“常规提醒”的所有权问题已修复。
+
+## MCP 实际读取超时
+
+- 实测 connection_status 已正常返回 READY，无需重新授权。本次 get_all_open_reminders 读取 26 条未完成事项、完成 3 个列表后，在“常规提醒”返回 UPSTREAM_UNAVAILABLE，complete=false，保留续读游标。
+- 发现传输层每次请求固定 8 秒中断，短于外层 40 秒操作预算。CloudKit records/query 只读查询现在最多等待 16 秒，外层取消信号继续约束总预算；其他请求保持原 8 秒，不增加写操作重放。
+- 汇总单页从 200 条缩小至 50 条，仍按 Apple 游标续读、不跳过失败页面。不改变独立读取工具可选的最大页数或完整性标记。
+- 网络异常与超时现在分别报告，附脱敏接口类别、主机、实际耗时与请求上限，不输出查询参数、凭证或原始异常内容。
+- 200 项测试、类型检查、构建、本地 workerd 通过，含超过原 8 秒但在 16 秒内返回的查询、16 秒中断、网络异常不泄露原始文本。真实慢查询与归属校验问题仍需新部署后的 MCP 验证。
