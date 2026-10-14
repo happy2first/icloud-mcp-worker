@@ -170,6 +170,33 @@ export class AppleAuthHTTP {
       signal,
     );
   }
+  static forFindMyVerification(
+    value: unknown,
+    send: typeof fetch = fetch,
+    signal?: AbortSignal,
+  ) {
+    const parsed = AuthSnapshotSchema.safeParse(value);
+    if (!parsed.success)
+      throw new AppError(
+        "REAUTH_REQUIRED",
+        "The saved Apple context is invalid. Original credentials preserved.",
+        409,
+      );
+    // Work on an isolated candidate. A rejected FMIP session must not feed old
+    // web tokens/cookies or SRP session headers into the new password sign-in.
+    // Retain only browser trust evidence: Apple decides if it is still valid,
+    // otherwise its HSA2 challenge follows the normal trusted-device flow.
+    const trust = parsed.data.headers["X-Apple-TwoSV-Trust-Token"];
+    return AppleAuthHTTP.restore(
+      {
+        ...parsed.data,
+        headers: trust ? { "X-Apple-TwoSV-Trust-Token": trust } : {},
+        cookies: [],
+      },
+      send,
+      signal,
+    );
+  }
   snapshot(): AuthSnapshot {
     return {
       region: this.region,

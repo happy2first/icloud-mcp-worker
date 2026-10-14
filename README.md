@@ -131,7 +131,7 @@ npm run check
 npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 ```
 
-check 包含类型检查、Node 测试、打包及本地 workerd 验证。测试只使用合成数据，不需要 Apple 凭证。2026-10-14 共 223 项 Node 测试通过；真实大陆区服务连接及多项只读操作已联调，简单周循环的「仅完成本次」已核对。真实响铃、所有写入形态、所有地区和长期稳定性未全面验收。详见 [当前验证记录](docs/VALIDATION.md)。
+check 包含类型检查、Node 测试、打包及本地 workerd 验证。测试只使用合成数据，不需要 Apple 凭证。2026-10-14 共 225 项 Node 测试通过；真实大陆区服务连接及多项只读操作已联调，简单周循环的「仅完成本次」已核对。真实响铃、所有写入形态、所有地区和长期稳定性未全面验收。详见 [当前验证记录](docs/VALIDATION.md)。
 
 提交问题时附工具名、脱敏参数、错误代码、请求编号和时间，不上传密码、Cookie、Token、个人截图或未经处理的日志。参见 [安全说明](SECURITY.md) 和 [开源前检查](docs/OPEN-SOURCE-REVIEW.md)。
 

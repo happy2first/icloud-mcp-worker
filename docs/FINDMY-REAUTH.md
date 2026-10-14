@@ -4,10 +4,16 @@ The mainland account can read other services while FMIP returns an empty HTTP 45
 
 Use the Find My card's **验证查找** action, `/connect/apple?service=findmy`. The existing browser SRP implementation proves the password; neither raw passwords nor derived keys enter the Worker API. This is an isolated, explicit interactive operation, not an automatic MCP retry.
 
-The Worker restores the verified session's Apple context, performs a new password proof with retained trust material, and accepts direct password success only in this reauthentication mode. A new HSA2 challenge still uses the normal device verification bridge. Initial connection continues to require fresh device verification.
+The Worker creates an isolated verification candidate with the saved region/client ID and trust token only. It clears stale session tokens, SRP session headers and all old cookies from this candidate before starting the password proof. The persisted original is untouched. Direct password success is accepted only in this reauthentication mode. A new HSA2 challenge still uses the normal device verification bridge. Initial connection continues to require fresh device verification.
 
 Before saving, enforce the original DSID and session generation and actually list accessible Find My devices. Only a successful read commits authentication material. Cancellation, wrong-account results or a rejected device listing leave the stored original credentials intact. Other service settings, PCS checkpoints and the original retention assurance are preserved. Apple's own server-side token revocation remains outside this guarantee.
 
 References: timlaing/pyicloud `authenticate`, SRP and Find My recovery; Apple's public mainland Find My and CloudOS scripts (`retrieveSession`/`processSessionRetrieveFinish`); ticaki/ioBroker.icloud `invalidateSession`. The obsolete direct `appName + apple_id + password` accountLogin flow is not used.
 
 Synthetic tests cover direct password success, identity mismatch, callback/read failure, initial verification enforcement and opening/cancelling an isolated socket without replacing the saved session. Production password verification and device listing require the owner's interactive test; this change is not yet a confirmed fix for every HTTP 450.
+
+## Fresh-context correction — 2026-10-14
+
+A repeat password verification could reuse old web tokens/cookies when Apple did not issue new authentication headers. That is a reproducible code defect, but not proof of the cause of every empty FMIP 450. The correction follows the stale-session reset approach in ticaki/ioBroker.icloud authStore.clearStaleSession: retain browser trust evidence while discarding stale authentication state in the candidate. No password persistence, remote logout, automatic verification or forced 2FA was added.
+
+New tests check stale cookie/header exclusion, use of the fresh password token, preservation of trust and the original snapshot, and refusal to fall back to an old token when fresh sign-in provides none. A fresh-session FMIP rejection reports its stage instead of telling a user who just verified to repeat the same flow. Live password verification still requires the owner's browser; no new live sound request was performed.

@@ -7,7 +7,7 @@ import { AppleAuthHTTP } from "./apple/http.ts";
 import { AppleSignInFlow } from "./apple/flow.ts";
 import { requireCurrentLogin } from "./apple/policy.ts";
 import { FindMyClient } from "../services/findmy.ts";
-import { WebClient } from "../services/web.ts";
+import { FindMySignInRequired, WebClient } from "../services/web.ts";
 import {
   APPLE_AUTH_PROTOCOL,
   AUTH_LIFETIME_MS,
@@ -106,7 +106,11 @@ export async function appleAuthSocket(
   const closed = () => phase === "closed";
   const flow = new AppleSignInFlow(
     existing
-      ? AppleAuthHTTP.restore(existing.session.auth, fetch, abort.signal)
+      ? AppleAuthHTTP.forFindMyVerification(
+          existing.session.auth,
+          fetch,
+          abort.signal,
+        )
       : new AppleAuthHTTP(
           undefined,
           undefined,
@@ -149,7 +153,20 @@ export async function appleAuthSocket(
             fetch,
             abort.signal,
           );
-          await new FindMyClient(new WebClient(verifiedHTTP, candidate)).list();
+          try {
+            await new FindMyClient(
+              new WebClient(verifiedHTTP, candidate),
+            ).list();
+          } catch (error) {
+            if (error instanceof FindMySignInRequired)
+              throw new AppError(
+                "REAUTH_REQUIRED",
+                error.diagnostic +
+                  " Find My rejected the new password-verified session (authContext=fresh; staleSessionReused=false). Original saved credentials preserved. Do not repeat verification continuously; HTTP 450 alone cannot identify the cause. Check the official iCloud Find My page for account requirements and report this safe diagnostic. No sound request was sent.",
+                409,
+              );
+            throw error;
+          }
           if (abort.signal.aborted || closed())
             throw new AppError(
               "RESTART_REQUIRED",

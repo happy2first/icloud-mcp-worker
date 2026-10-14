@@ -46,6 +46,7 @@ export async function prepareWebRead<T>(
 }
 // pyicloud treats FMIP 450 as full sign-in, not a saved-token exchange.
 export class FindMySignInRequired extends AppError {
+  readonly diagnostic: string;
   constructor(diagnostic: string) {
     super(
       "REAUTH_REQUIRED",
@@ -53,6 +54,7 @@ export class FindMySignInRequired extends AppError {
         " Find My rejected this web session. Complete the separate Find My password verification at /connect/apple?service=findmy (Verify Find My in /admin); do not repeatedly reconnect the whole account. HTTP 450 alone cannot identify the cause; inspect cookieContext and responseFormat. App-specific passwords cannot authenticate Find My. Other iCloud credentials were preserved; no token exchange or automatic replay was performed.",
       409,
     );
+    this.diagnostic = diagnostic;
   }
 }
 export async function webOperation<T>(

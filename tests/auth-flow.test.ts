@@ -160,6 +160,142 @@ const accountReply = {
     ckdatabasews: { url: "https://p123-ckdatabasews.icloud.com" },
   },
 };
+test("Find My verification clears stale session material but retains trust and the original snapshot", async () => {
+  const saved = {
+    region: "cn" as const,
+    clientId: "synthetic-client",
+    headers: {
+      "X-Apple-Session-Token": "stale-session-token",
+      "X-Apple-ID-Session-Id": "stale-id-session",
+      scnt: "stale-scnt",
+      "X-Apple-Auth-Attributes": "stale-attributes",
+      "X-Apple-TwoSV-Trust-Token": "retained-trust",
+    },
+    cookies: [
+      {
+        name: "X-APPLE-WEBAUTH-TOKEN",
+        value: "stale-cookie",
+        domain: "icloud.com.cn",
+        hostOnly: false,
+        path: "/",
+        secure: true,
+        expiresAt: null,
+      },
+    ],
+  };
+  const before = structuredClone(saved),
+    requests: RecordedRequest[] = [];
+  const replies: Reply[] = [
+    { status: 200 },
+    { body: challenge },
+    {
+      status: 200,
+      headers: {
+        ...authenticatedHeaders,
+        "X-Apple-ID-Account-Country": "CN",
+        "X-Apple-Session-Token": "fresh-password-token",
+      },
+    },
+    {
+      body: {
+        ...accountReply,
+        webservices: {
+          ckdatabasews: { url: "https://p123-ckdatabasews.icloud.com.cn" },
+        },
+      },
+    },
+  ];
+  const send = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const req = {
+      url,
+      path: url.pathname,
+      method: init?.method ?? "GET",
+      headers: new Headers(init?.headers),
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    };
+    requests.push(req);
+    assert.equal(req.headers.get("cookie"), null);
+    assert.notEqual(req.headers.get("scnt"), "stale-scnt");
+    assert.notEqual(
+      req.headers.get("X-Apple-ID-Session-Id"),
+      "stale-id-session",
+    );
+    const reply = replies.shift();
+    assert.ok(reply);
+    return response(reply);
+  }) as typeof fetch;
+  const http = AppleAuthHTTP.forFindMyVerification(saved, send);
+  assert.equal(http.value("X-Apple-Session-Token"), undefined);
+  assert.equal(http.value("X-Apple-TwoSV-Trust-Token"), "retained-trust");
+  let persisted = false;
+  const flow = new AppleSignInFlow(
+    http,
+    new AbortController().signal,
+    async (session) => {
+      assert.equal(
+        session.auth.headers["X-Apple-Session-Token"],
+        "fresh-password-token",
+      );
+      persisted = true;
+    },
+    undefined,
+    undefined,
+    "123456789",
+  );
+  await flow.start(startMessage);
+  await flow.advance(proofMessage);
+  assert.equal(persisted, true);
+  assert.deepEqual((requests[2].body as any).trustTokens, ["retained-trust"]);
+  assert.equal(
+    (requests[3].body as any).dsWebAuthToken,
+    "fresh-password-token",
+  );
+  assert.deepEqual(saved, before);
+});
+test("password acceptance without a fresh session token cannot fall back to the old Find My token", async () => {
+  const old = {
+    region: "cn" as const,
+    clientId: "synthetic-client",
+    cookies: [],
+    headers: {
+      "X-Apple-Session-Token": "stale-token",
+      "X-Apple-TwoSV-Trust-Token": "retained-trust",
+    },
+  };
+  let calls = 0,
+    persisted = false;
+  const replies: Reply[] = [
+    { status: 200 },
+    { body: challenge },
+    { status: 200 },
+  ];
+  const send = (async () => {
+    calls++;
+    const next = replies.shift();
+    assert.ok(next);
+    return response(next);
+  }) as typeof fetch;
+  const http = AppleAuthHTTP.forFindMyVerification(old, send);
+  const flow = new AppleSignInFlow(
+    http,
+    new AbortController().signal,
+    async () => {
+      persisted = true;
+    },
+    undefined,
+    undefined,
+    "123456789",
+  );
+  await flow.start(startMessage);
+  await assert.rejects(
+    flow.advance(proofMessage),
+    (e: any) => e.code === "REAUTH_REQUIRED",
+  );
+  assert.equal(calls, 3);
+  assert.equal(persisted, false);
+  assert.equal(old.headers["X-Apple-Session-Token"], "stale-token");
+});
 test("Find My reauthentication accepts a trusted password proof, verifies the same account, and propagates live-read failure", async () => {
   const initial = scriptedHTTP([
     { status: 200 },

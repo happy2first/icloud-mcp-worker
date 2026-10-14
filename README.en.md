@@ -131,7 +131,7 @@ npm run check
 npx wrangler deploy --dry-run --outdir .wrangler/dry-run
 ```
 
-check runs type checking, Node tests, bundling and local workerd checks. Fixtures are synthetic and require no Apple credentials. On 2026-10-14, 223 Node tests passed. Mainland service connections and several reads were exercised live; a simple weekly completion was reconciled as current-occurrence-only. Real sound playback, every write shape, all regions and long-term reliability remain unverified. See [validation evidence](docs/VALIDATION.md).
+check runs type checking, Node tests, bundling and local workerd checks. Fixtures are synthetic and require no Apple credentials. On 2026-10-14, 225 Node tests passed. Mainland service connections and several reads were exercised live; a simple weekly completion was reconciled as current-occurrence-only. Real sound playback, every write shape, all regions and long-term reliability remain unverified. See [validation evidence](docs/VALIDATION.md).
 
 For issues, provide the tool, redacted arguments, error code, request ID and time. Do not upload passwords, cookies, tokens, personal screenshots or unredacted logs. See [Security](SECURITY.md) and the [pre-publication review](docs/OPEN-SOURCE-REVIEW.md).
 
