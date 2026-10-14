@@ -184,7 +184,10 @@ export function beginAppleSignIn(
         }
         if (
           value.type === "complete" &&
-          phase === "completion" &&
+          (phase === "completion" ||
+            (consent.service === "findmy" &&
+              phase === "device-challenge" &&
+              value.state === "READY")) &&
           ["READY", "DEVICE_APPROVAL_PENDING"].includes(String(value.state))
         ) {
           const result: Extract<AuthEvent, { type: "complete" }> = {
