@@ -1016,6 +1016,7 @@ export class CloudKitRemindersClient {
     path: CloudKitPath,
     payload: Record<string, unknown>,
     database: "private" | "shared" = "private",
+    timeoutMs?: number,
   ): Promise<Record<string, unknown>> {
     requireInput(
       database === "private" ||
@@ -1042,7 +1043,11 @@ export class CloudKitRemindersClient {
       body,
       discovered: true,
       followRedirects: path !== "/records/modify",
-      ...(path === "/records/query" ? { timeoutMs: 16_000 } : {}),
+      ...(timeoutMs
+        ? { timeoutMs }
+        : path === "/records/query"
+          ? { timeoutMs: 16_000 }
+          : {}),
     });
     if ([401, 421, 450].includes(response.status)) {
       console.warn({
@@ -1261,7 +1266,12 @@ export class CloudKitRemindersClient {
         MAX_REQUEST_BYTES,
       "The occurrence exceeds its atomic byte budget.",
     );
-    const result = await this.post("/records/modify", payload);
+    const result = await this.post(
+      "/records/modify",
+      payload,
+      "private",
+      20_000,
+    );
     const page = pageRecords(
       result.records,
       operations.length,

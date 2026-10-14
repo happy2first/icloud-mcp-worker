@@ -311,7 +311,7 @@ export class AppleHTTP {
       if (e instanceof AppError) throw e;
       throw new AppError(
         "UPSTREAM_UNAVAILABLE",
-        `Apple ${stage} (${url.hostname}; endpoint=${["/records/query", "/records/lookup", "/zones/list", "/accountLogin", "/validate"].find((path) => url.pathname.endsWith(path)) ?? "other"}): ${controller.signal.aborted ? "request timed out or operation deadline reached" : "network request failed"}; elapsedMs=${Math.max(0, Date.now() - startedAt)}; requestTimeoutMs=${timeoutMs}. No automatic replay.`,
+        `Apple ${stage} (${url.hostname}; endpoint=${["/records/modify", "/records/query", "/records/lookup", "/zones/list", "/accountLogin", "/validate"].find((path) => url.pathname.endsWith(path)) ?? "other"}): ${controller.signal.aborted ? "request timed out or operation deadline reached" : "network request failed"}; elapsedMs=${Math.max(0, Date.now() - startedAt)}; requestTimeoutMs=${timeoutMs}. No automatic replay.`,
         503,
         true,
       );

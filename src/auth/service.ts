@@ -102,7 +102,7 @@ type OperationMode =
   | "snapshot";
 interface OperationStage {
   phase: OperationMode | "mutation-dispatch" | "mutation-confirmation";
-  dispatch(): void;
+  dispatch(minimumBudgetMs?: number): void;
   confirm(): void;
 }
 export const ControlledRead = z.discriminatedUnion("action", [
@@ -658,7 +658,7 @@ export class AppleConnectionService {
             );
             await repository.assertWriteLease(fence);
             occurrenceId = plan.historyId;
-            stage.dispatch();
+            stage.dispatch(29_000);
             applied = true; // Atomic dispatch may already have committed if confirmation is lost.
             const records = await client.modifyOccurrence(plan.operations);
             const active = verifyOccurrence(plan, records, owner);
@@ -764,6 +764,9 @@ export class AppleConnectionService {
               : {}),
           };
         },
+        input.action === "complete"
+          ? { ...appleRequestBudget(), deadline: Date.now() + 60_000 }
+          : appleRequestBudget(),
       );
     } catch (error) {
       if (applied || error instanceof WriteOutcomeUnknownError)
@@ -831,8 +834,8 @@ export class AppleConnectionService {
       );
       const stage: OperationStage = {
         phase: mode,
-        dispatch() {
-          if (budget.deadline - Date.now() < 9000)
+        dispatch(minimumBudgetMs = 9000) {
+          if (budget.deadline - Date.now() < minimumBudgetMs)
             throw new AppError(
               "CONFLICT",
               "The complete request budget is too short for a write. No mutation was dispatched.",
