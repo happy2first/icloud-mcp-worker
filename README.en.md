@@ -37,53 +37,43 @@ Saved credentials do not prove a working connection. Check each service. Additio
 
 New web sessions have no local retention deadline until disconnected, but Apple can revoke them or require sign-in. Live validation used Advanced Data Protection off; enabled ADP remains unverified. SMS, phone and hardware security-key sign-in flows are unsupported.
 
-## Deployment
+## Deploy to Cloudflare in 5 steps (no CLI required)
 
-Requirements: Node.js 24+, Cloudflare Workers/D1 permissions and a custom Cloudflare hostname. Protect the entire hostname with Access, allow only your intended identity and enable [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/).
+**Fork → Connect GitHub to Workers Builds → Custom domain → Access / OAuth + runtime configuration → Apple sign-in in management.**
 
-### Local deployment
+[**Follow the detailed illustrated deployment guide →**](docs/QUICK-START.en.md) · [中文版逐步教程](docs/USER-GUIDE.md)
 
-```bash
-git clone https://github.com/happy2first/icloud-mcp-worker.git
-cd icloud-mcp-worker
-npm ci
-npm run check
-npx wrangler login
-npx wrangler d1 create icloud-mcp-worker
-cp wrangler.toml wrangler.local.toml
-```
+![Management walkthrough illustration](docs/images/admin-overview.svg)
 
-Set the real D1 `database_id` in the ignored `wrangler.local.toml`, retaining binding DB. Add your route at the top level, before any [section]:
+Requirements: GitHub, a Cloudflare account with Workers/D1 access, and a domain on Cloudflare. For this browser-only path you **do not need to install Node.js, Wrangler, a Mac or a VPS**.
 
-```toml
-routes = [{ pattern = "icloud.example.com", custom_domain = true }]
-```
+1. **Fork** [this repository](https://github.com/happy2first/icloud-mcp-worker), retaining its `icloud-mcp-worker` repository name.
+2. **Import:** Cloudflare Dashboard → **Workers & Pages → Create application → Import a repository**. Connect the forked GitHub repository, use Worker name `icloud-mcp-worker` and branch `main`. Set **Build command** to `npm run build` and **Deploy command** to `npm run deploy:cloud`, then **Save and Deploy**. The deploy script deploys the Worker and applies `schema.sql` to the D1 database bound as `DB`. See the [guide](docs/QUICK-START.en.md) if D1 permissions or creation fail.
+3. **Domain:** Worker → **Settings → Domains & Routes → Add → Custom Domain**, e.g. `icloud.example.com`. The tracked configuration disables `workers.dev`.
+4. **Access / OAuth:** Zero Trust → **Access controls → Applications**. Protect the **entire hostname**, allow only your own identity, and turn on **Managed OAuth** under **Advanced settings**. Under **Allowed redirect URIs** add:
 
-Configure two ordinary variables and one Secret:
+   ```text
+   https://chatgpt.com/connector/oauth/*
+   ```
 
-| Name                   | Type          | Value                                                              |
-| ---------------------- | ------------- | ------------------------------------------------------------------ |
-| `TEAM_DOMAIN`          | Variable      | Full Access team URL, e.g. https://your-team.cloudflareaccess.com  |
-| `POLICY_AUD`           | Variable      | AUD of the Access application protecting the hostname              |
-| `ENCRYPTION_KEYS_JSON` | Worker Secret | Standard Base64 of 32 random bytes; raw value, without JSON/quotes |
+   This is ChatGPT's **allowed OAuth callback pattern**, **not** your Worker URL. Cloudflare explicitly supports the `/*` subpath wildcard. Copy the application's **Audience (AUD) Tag**.
+5. **Runtime variables:** Worker → **Settings → Variables and Secrets** (not Build variables). Add:
 
-Set variables in the Dashboard or your local [vars]. `keep_vars=true` preserves Dashboard variables. The encryption Secret's name retains backward compatibility; legacy JSON key configuration remains readable.
+   | Name | Type | Value |
+   | --- | --- | --- |
+   | `TEAM_DOMAIN` | Text | Your Access team URL, e.g. `https://your-team.cloudflareaccess.com` |
+   | `POLICY_AUD` | Text | The Access application's **Audience (AUD) Tag** |
+   | `ENCRYPTION_KEYS_JSON` | **Secret** | Standard Base64 encoding of **32 random bytes**, e.g. via trusted local `openssl rand -base64 32`; enter the raw output without quotes/JSON |
 
-```bash
-openssl rand -base64 32
-npx wrangler secret put ENCRYPTION_KEYS_JSON --config wrangler.local.toml
-# Enter the generated value at the interactive prompt
-npx wrangler d1 execute DB --remote --file schema.sql --config wrangler.local.toml
-npx wrangler deploy --config wrangler.local.toml
-```
+   Back up this encryption key securely. **Never regenerate it on normal updates or replace the existing D1 database.**
 
-These are first-deployment steps. Existing deployments must reuse their database and encryption key. Generating a replacement key for an ordinary update makes saved credentials unreadable. Apple passwords, cookies and tokens do not belong in Wrangler configuration.
+Visit `https://icloud.example.com/admin` and sign in through Access. Configure **Apple web sign-in** for Reminders, Notes, Photos, Drive, and Find My; optionally configure an **Apple app-specific password** for Calendar and Contacts. Enable the desired services, run **Check connection** on each, and complete additional Apple approval only when required. Copy the generated `https://icloud.example.com/mcp` into ChatGPT or any compatible remote-MCP client and start with `icloud_status`.
 
-### GitHub → Cloudflare Workers Builds
+![OAuth settings illustration](docs/images/access-oauth-setup.svg)
 
-Connect the repository; use npm run build for building and npm run deploy:cloud for deployment. Configure the same variables, Secret and custom hostname in Cloudflare; cloud builds cannot read your local `wrangler.local.toml`. The default configuration reuses/provisions D1 by name and the deploy script applies the initial schema. Explicitly bind an existing database with a different name rather than accidentally creating a replacement.
+These are annotated illustrations, **not screenshots of a real account**. See the [step-by-step illustrated English guide](docs/QUICK-START.en.md) for every setting, Apple authentication, verification, and troubleshooting. An optional CLI method is documented there too.
 
-Tracked configuration disables `workers.dev` and preview URLs; use an Access-protected custom hostname. Apple login/renewal default on. Set `APPLE_LOGIN_ENABLED`=false or `APPLE_SESSION_RENEWAL_ENABLED`=false only to pause them deliberately. Origin and owner identity come from actual requests and verified Access JWTs, not required configuration variables.
+**Security:** This project relies on unofficial Apple APIs. Do not expose management/MCP endpoints without Access protection. Never put Apple primary/app-specific passwords, session tokens or cookies in a repository or Worker environment settings.
 
 ## Connect any MCP client
 
