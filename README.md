@@ -37,53 +37,43 @@ MCP 不公开删除、登录、凭证录入或服务授权工具。日历、通�
 
 新网页会话默认无本地保留期限，可主动断开；Apple 仍可能撤销或要求重新登录。实测账户关闭高级数据保护，开启后的兼容性尚未验证。短信、电话及硬件安全密钥登录流程不支持。
 
-## 部署
+## 五步部署到 Cloudflare（推荐：无需命令行）
 
-需要 Node.js 24+、Cloudflare Workers/D1 权限和自己的 Cloudflare 域名。保护整个自定义域名的 Access 应用应只允许你的身份，并启用 [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)。
+**Fork 仓库 → Cloudflare 连接 GitHub 自动部署 → 绑定域名 → Access / OAuth + 运行时变量 → 管理页登录 Apple。**
 
-### 本地部署
+[**查看带配置表、示意图和排错步骤的图解部署教程 →**](docs/USER-GUIDE.md)
 
-```bash
-git clone https://github.com/happy2first/icloud-mcp-worker.git
-cd icloud-mcp-worker
-npm ci
-npm run check
-npx wrangler login
-npx wrangler d1 create icloud-mcp-worker
-cp wrangler.toml wrangler.local.toml
-```
+![管理页配置示意](docs/images/admin-overview.svg)
 
-在已忽略的 `wrangler.local.toml` 中填写 D1 的真实 `database_id`，保留绑定名 DB。在文件顶层添加自己的路由，放在各 [section] 之前：
+前提：GitHub、Cloudflare Workers/D1 账号，以及一个已接入 Cloudflare 的域名。使用图形化部署，**不必安装 Mac、Node.js、Wrangler 或 VPS**。
 
-```toml
-routes = [{ pattern = "icloud.example.com", custom_domain = true }]
-```
+1. **Fork：** 打开 [本仓库](https://github.com/happy2first/icloud-mcp-worker)，点击右上角 **Fork**，保留仓库名 `icloud-mcp-worker`。
+2. **导入：** Cloudflare → **Workers & Pages → Create application → Import a repository**，连接 GitHub 并选择刚才的 Fork。Worker 名称与 `wrangler.toml` 一致：`icloud-mcp-worker`，分支 `main`。构建命令填 `npm run build`，部署命令填 `npm run deploy:cloud`，然后 **Save and Deploy**。部署脚本按仓库配置创建/复用 D1（绑定名 `DB`）并应用 `schema.sql`。如果 D1 创建失败，参见 [部署指南的排错说明](docs/USER-GUIDE.md#第-2-步在-cloudflare-导入-github-仓库)。
+3. **域名：** Worker → **Settings → Domains & Routes → Add → Custom Domain**，例如 `icloud.example.com`。使用此完整域名，而不是 `workers.dev`。
+4. **Access / OAuth：** Zero Trust → **Access controls → Applications**，新建保护**整个子域名**的 Self-hosted 应用，Allow 策略只允许自己的邮箱。到 **Advanced settings** 打开 **Managed OAuth**，在 **Allowed redirect URIs** 中添加：
 
-配置两项普通变量和一项 Secret：
+   ```text
+   https://chatgpt.com/connector/oauth/*
+   ```
 
-| 名称                   | 类型          | 内容                                                              |
-| ---------------------- | ------------- | ----------------------------------------------------------------- |
-| `TEAM_DOMAIN`          | 普通变量      | 完整 Access 团队地址，例如 https://your-team.cloudflareaccess.com |
-| `POLICY_AUD`           | 普通变量      | 保护该域名的 Access 应用 AUD                                      |
-| `ENCRYPTION_KEYS_JSON` | Worker Secret | 32 字节随机密钥的标准 Base64 字符串；直接填值，不加 JSON/引号     |
+   这是 ChatGPT 的 OAuth **回调允许列表**，不是 Worker URL。Cloudflare 支持 `/*` 子路径通配符；不要使用更宽泛的通配符。复制该 Access 应用的 **Application Audience (AUD) Tag**。
+5. **变量与管理页：** Worker → **Settings → Variables and Secrets**，添加下表后访问 `https://icloud.example.com/admin`，通过 Access 登录并配置 Apple 凭证：
 
-普通变量可在 Dashboard 设置，或写入本地配置的 [vars]。`keep_vars=true` 保留 Dashboard 普通变量。加密 Secret 的名称为兼容旧部署保留，旧 JSON 密钥格式仍可读取。
+   | 名称 | 类型 | 值 |
+   | --- | --- | --- |
+   | `TEAM_DOMAIN` | Text（普通变量） | Zero Trust 团队地址，如 `https://your-team.cloudflareaccess.com` |
+   | `POLICY_AUD` | Text（普通变量） | 第 4 步 Access 应用的 AUD Tag |
+   | `ENCRYPTION_KEYS_JSON` | **Secret** | 32 字节随机密钥的**标准 Base64**（例如在可信本机执行 `openssl rand -base64 32`），直接填写值，不要加 JSON 或引号 |
 
-```bash
-openssl rand -base64 32
-npx wrangler secret put ENCRYPTION_KEYS_JSON --config wrangler.local.toml
-# 在交互提示中录入上一步生成的密钥
-npx wrangler d1 execute DB --remote --file schema.sql --config wrangler.local.toml
-npx wrangler deploy --config wrangler.local.toml
-```
+   配置的是 Worker **运行时**变量，不是 Build variables。首次使用请妥善备份密钥；以后更新**保留原 D1 和同一密钥**，不要重置。
 
-以上为首次部署流程。已有部署应复用原数据库和加密密钥，不能重新生成密钥来做普通更新，否则已有凭证无法解密。不要将 Apple 密码、Cookie 或 Token 写入 Wrangler 配置。
+管理页中，**Apple 网页登录**负责提醒事项、备忘录、照片、云盘、查找；**App 专用密码**负责日历、通讯录。按需保存凭证、启用服务、逐项点击「检查连接」，只有 Apple 要求时才做额外可信设备/PCS 验证。最后复制顶部生成的 `https://icloud.example.com/mcp`，在 ChatGPT 或其他远程 MCP 客户端连接并测试 `icloud_status`。
 
-### GitHub → Cloudflare Workers Builds
+![Access Managed OAuth 设置示意](docs/images/access-oauth-setup.svg)
 
-关联仓库，构建命令为 npm run build，部署命令为 npm run deploy:cloud。在 Cloudflare 配置同样的两项变量、Secret 和自定义域名；构建环境读不到本机的 `wrangler.local.toml`。默认配置按数据库名称复用/创建 D1，部署脚本应用初始 schema；已有数据库名称不同时显式配置正确绑定，避免误建新库。
+示意图根据设置项绘制，**并非真实控制台截图**。详细的每个按钮、两种 Apple 凭证、Find My 验证和故障处理，都在 [零命令行图解教程](docs/USER-GUIDE.md)。命令行部署是可选高级方式，也在该指南末尾提供。
 
-仓库配置关闭 `workers.dev` 和预览地址，应使用受 Access 保护的自定义域名。Apple 登录和会话恢复默认开启，确需暂停时分别设 `APPLE_LOGIN_ENABLED`=false、`APPLE_SESSION_RENEWAL_ENABLED`=false。无需填写部署域名或用户身份变量，它们来自实际请求及验证后的 Access JWT。
+**安全提示：** 此项目使用 Apple 非官方协议，**只允许可信的 Access 身份**，不可公开暴露管理和 MCP 路由；Apple 主密码、Cookie、Token 和 App 专用密码只通过自己部署的管理页录入，绝不写在 GitHub 仓库或 Worker 变量中。
 
 ## 连接任意 MCP 客户端
 
