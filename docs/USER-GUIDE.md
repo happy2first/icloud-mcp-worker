@@ -1,12 +1,193 @@
-# 部署与使用指南
+# 从零部署与使用 iCloud MCP Worker（图解版）
 
-本指南面向自行部署者。项目是非官方 Apple 集成；当前大陆区部署与服务已联调，具体证据和未覆盖范围见 [VALIDATION.md](VALIDATION.md)。英文部署说明见 [README.en.md](../README.en.md)。
+[返回中文 README](../README.md) · [English](../README.en.md)
 
-## 1. 部署准备
+**普通用户推荐流程：Fork GitHub 仓库 → Cloudflare 导入并部署 → 绑定域名 → 配置 Access / OAuth → 填写 3 个运行时变量 → 管理页登录 Apple → 在 ChatGPT 添加 MCP。**
 
-需要 Node.js 24+、Cloudflare Workers/D1 权限、Cloudflare 自定义域名，以及允许登录的个人身份。
+不需要 Mac、VPS、R2，不用在本地安装 Node.js / Wrangler，也不用手动编译代码。首次部署通常只需要 Cloudflare 和 GitHub 的网页操作。本文以 `icloud.example.com` 为**示例域名**，请替换成自己的域名。
+
+> 这是非 Apple 官方项目，使用 Apple 非公开网页协议；更新可能影响兼容性。示意图根据当前仓库的页面字段绘制，不是真实 Cloudflare 控制台或个人账户截图。**全部 Apple 凭证只在自己部署的管理页输入，不要上传到 GitHub、聊天、截图或 Worker 环境变量。**
+
+## 开始前准备
+
+- 一个 GitHub 账号、一个 Cloudflare 账号（可进入 Workers 和 D1）。
+- 一个已托管在 Cloudflare 的域名，用来设置专用子域名，例如 `icloud.example.com`。本项目的默认配置关闭了 `workers.dev` 公共入口，因此不能只依赖 `*.workers.dev` 访问。
+- 可以收到 Cloudflare Access 登录验证的邮箱，以及可以正常完成可信设备验证的 Apple 账户。
+- 只有需要**日历/通讯录**时才需要 Apple 的 [App 专用密码](https://support.apple.com/en-us/102654)。
+
+## 第 1 步：Fork 项目到自己的 GitHub
+
+1. 打开 [项目仓库](https://github.com/happy2first/icloud-mcp-worker)。
+2. 右上角点击 **Fork → Create a new fork**，选择自己的 GitHub 账号。
+3. 仓库名建议保持 `icloud-mcp-worker`，直接创建。无需下载项目，也无需修改代码。
+
+> Cloudflare Worker 的名称应与仓库 `wrangler.toml` 中的 `name = "icloud-mcp-worker"` 一致。普通部署直接沿用即可。
+
+## 第 2 步：在 Cloudflare 导入 GitHub 仓库
+
+1. 进入 [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create application**。
+2. 找到 **Import a repository / 导入仓库**，选择 GitHub 并按提示授权 Cloudflare 读取你的 Fork。
+3. 选择 `<你的 GitHub 用户名>/icloud-mcp-worker`，生产分支使用 `main`，项目根目录保持默认。
+4. 检查构建设置：
+
+   | 设置 | 填写值 |
+   | --- | --- |
+   | Worker 名称 | `icloud-mcp-worker` |
+   | Build command / 构建命令 | `npm run build` |
+   | Deploy command / 部署命令 | `npm run deploy:cloud` |
+   | Root directory / 根目录 | 默认（仓库根目录） |
+   | Production branch / 生产分支 | `main` |
+
+5. 点击 **Save and Deploy**，打开 **Builds** 查看结果。`npm run deploy:cloud` 会部署 Worker 并执行 `schema.sql` 初始化 D1 数据表；仓库 `wrangler.toml` 使用 `DB` 绑定和数据库名 `icloud-mcp-worker`，支持按名称复用/创建数据库。
+
+如果平台要求先创建 Worker 再关联代码：先创建名为 `icloud-mcp-worker` 的 Worker，再到 **Settings → Builds → Connect** 连接 Fork，并填写同样的两个命令。**无需同时配置两种部署方式。**
+
+**第一次部署失败怎么办？** 看构建日志：如果报 D1 创建或绑定权限错误，先检查 Workers Builds 使用的 API Token 是否有对应 D1 权限，或在 Cloudflare **Storage & Databases → D1** 创建名为 `icloud-mcp-worker` 的数据库后重试。不要填假的 `database_id`，也不要随意删除已投入使用的数据库。
+
+官方参考：[Cloudflare GitHub 部署](https://developers.cloudflare.com/workers/ci-cd/builds/) · [构建配置](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
+
+## 第 3 步：给 Worker 绑定自己的域名
+
+1. 打开刚部署的 Worker，进入 **Settings → Domains & Routes**（有些新版界面在 **Domains** 选项卡）。
+2. 点击 **Add → Custom Domain**，输入 `icloud.example.com`，确认创建。
+3. 等待 Cloudflare 自动完成 DNS/HTTPS 绑定。**不需要另外手动创建重复的 CNAME**。
+4. 检查 Worker 对应子域名是唯一预期入口，`workers.dev` / Preview URL 保持关闭。
+
+后面访问的地址固定是：
+
+- 管理页：`https://icloud.example.com/admin`
+- MCP：`https://icloud.example.com/mcp`（实际以管理页顶部生成的地址为准）
+
+此时**不要急着用 Apple 登录**：必须先完成下面的 Access 和加密 Secret 配置。
+
+官方参考：[Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
+
+## 第 4 步：创建 Cloudflare Access 应用
+
+本项目依靠 Cloudflare Access 保护**整个域名**，而不只是管理页。它同时为 ChatGPT 等 MCP 客户端提供 OAuth 授权。
+
+1. 打开 Cloudflare **Zero Trust → Access controls → Applications**。
+2. 新建应用，选择 **Self-hosted / 自托管应用**（或可用的 MCP server application），填写应用名称如 `iCloud MCP`。
+3. 保护的域名设置为 `icloud.example.com`，**不限定路径**。这样 `/admin`、`/connect/apple`、`/mcp` 和下载接口全都受到保护。
+4. 建立 **Allow** 策略，Include 只填自己的邮箱（或明确授权的身份）；不要选择 `Everyone`，也不要创建 Bypass 公开规则。
+5. 到应用 **Advanced settings / 高级设置**，**开启 Managed OAuth**；如果界面提供动态客户端注册选项，保持启用。
+6. 在 **Allowed redirect URIs / 允许的重定向 URI** 中加入下面这**一整行**：
+
+   ```text
+   https://chatgpt.com/connector/oauth/*
+   ```
+
+7. 保存应用，然后在应用的 **Additional settings** 或应用详情复制 **Application Audience (AUD) Tag**，下一步要填到 `POLICY_AUD`。
+
+![Cloudflare Access Managed OAuth 的配置示意图](images/access-oauth-setup.svg)
+
+> `https://chatgpt.com/connector/oauth/*` **是允许 ChatGPT 回调的地址模式，不是你的 Worker 地址，也不是需要填入 Worker 的变量**。Cloudflare Managed OAuth 官方支持以 `/*` 匹配子路径。只添加你实际使用的客户端回调范围；不要设置 `https://*` 这样的宽泛许可。这个 OAuth 是**ChatGPT → 你的 MCP** 的授权，与 Apple 的可信设备验证是两回事。
+
+建议保持 OAuth 的短 Access token 生命周期，并根据个人使用频率设置 Grant session duration；不必手动创建第三方 OAuth Client ID / Client Secret。官方参考：[Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)。
+
+## 第 5 步：配置两个变量、一个 Secret
+
+回到 **Workers & Pages → icloud-mcp-worker → Settings → Variables and Secrets（运行时变量和机密）**。注意**不是** `Settings → Build → Build variables`；构建时变量不会自动成为 Worker 运行时变量。
+
+| 名称（区分大小写） | 类型 | 填写方法 |
+| --- | --- | --- |
+| `TEAM_DOMAIN` | 普通 Text 变量 | Cloudflare Zero Trust 的**团队域名**，例如 `https://my-team.cloudflareaccess.com`（完整 HTTPS 地址，不是 iCloud 子域名） |
+| `POLICY_AUD` | 普通 Text 变量 | 第 4 步 Access 应用的 **Audience (AUD) Tag**，按原样复制 |
+| `ENCRYPTION_KEYS_JSON` | **Secret**（加密值） | 随机 32 字节原始数据的标准 Base64，一般为 44 个字符；不要加引号、JSON 花括号或前缀 |
+
+生成 Secret：只需生成**一次**，从以下命令中选择适合自己电脑的一种，**不要使用在线随机密码网站生成生产密钥**：
+
+- macOS / Linux 终端：`openssl rand -base64 32`
+- Windows PowerShell：
+
+  ```powershell
+  $bytes = New-Object byte[] 32
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  [Convert]::ToBase64String($bytes)
+  ```
+
+**最重要的保存规则：** 记得妥善离线备份此加密密钥。首次运行可生成新密钥；以后修改代码、重新部署必须**保持同一密钥和 D1 数据库**，否则旧凭证将无法解密。Apple 的主密码、App 专用密码、Cookie/Token 均**不在**这三个变量里配置。
+
+添加/保存后，必要时重新执行一次部署并确认生产 Worker 使用最新的变量；不要因为构建成功就认为已完成运行时配置。
+
+## 第 6 步：打开管理页，配置 Apple 连接
+
+浏览器访问 `https://icloud.example.com/admin`，首先应跳到 Cloudflare Access 的验证页面；用第 4 步 Allow 策略允许的邮箱登录。
+
+管理页顶部会显示你自己的 **MCP 地址**；下方有两张不同的凭证卡。**按需要配置，不是必须两个都填。**
+
+![iCloud MCP 管理页示意图](images/admin-overview.svg)
+
+### 6.1 Apple 网页登录（提醒事项 / 备忘录 / 照片 / 云盘 / 查找）
+
+1. 在「**凭证管理 → Apple 网页登录**」点击 **登录 Apple**。
+2. 在新页面选择 **iCloud 服务区域**：中国大陆（云上贵州）或国际区，必须与账户实际区域一致。
+3. 填写 **Apple 账户** 和 **Apple 账户主密码**，勾选页面上的两项会话/存储授权确认后点击 **登录并验证设备**。
+4. 如果 Apple 在可信设备上推送批准请求，先在设备上批准，再将显示的**六位验证码**填入浏览器页面。
+5. 按页面提示返回管理页，看到「网页凭证已保存」之类的状态即可进入下一步。**保存成功不代表所有服务都已连通。**
+
+登录页面是你自己部署的 Worker 提供的**非 Apple 官方页面**。根据项目实现，主密码在浏览器参与 SRP 证明计算，Worker 不保存主密码；Cookie/Token 则加密存储在 D1。操作前仍应确认自己信任所部署的源码与域名。
+
+### 6.2 App 专用密码（日历 / 通讯录）
+
+**只用到提醒事项、照片等网页版服务时，可以跳过这一段。**
+
+1. 打开 [Apple 账户管理](https://account.apple.com/) → **登录和安全 → App 专用密码**，创建一个专用密码。
+2. 回到管理页「**App 专用密码**」卡片，分别填写自己的 **Apple 账户邮箱** 与刚生成的形如 `xxxx-xxxx-xxxx-xxxx` 的密码。
+3. 点击 **保存**。注意这**不是 Apple 主密码**，也不能用于「查找」验证。
+4. 后续如果重置专用密码，使用该卡片 **更新凭证**，不必清空网页会话。
+
+### 6.3 开启服务并逐项检查
+
+1. 在「**服务连接**」区域，开启你确实需要的服务（默认停用）。
+2. 先保持「允许新增与修改」等**写入权限关闭**，点击每张服务卡上的 **检查连接**。
+3. 如果 Apple 提出新的**设备批准 / 数据访问（PCS）验证**，只在页面提示时完成；没有提示就不需要额外验证。
+4. 「**查找**」有时会要求再次输入**同一 Apple 账户主密码**，请使用对应卡片的「验证查找」入口。该操作与普通 Apple 网页会话验证分离；遇到 `REAUTH_REQUIRED` 时先看技术详情，**不要反复重连整个账号**。
+5. 逐项确认卡片的上次检查结果为成功。点击「**刷新页面状态**」只重新读取保存状态，**不等于向 Apple 重测连通性**。
+6. 真正要让 AI 新增/修改日历、通讯录或提醒事项时，再单独开启相关写权限。备忘录、照片、云盘保持只读。
+
+## 第 7 步：在 ChatGPT 添加连接
+
+1. 在管理页顶部复制自动生成的 `https://icloud.example.com/mcp`。
+2. 在支持自定义远程 MCP 的 ChatGPT 连接器/插件设置中，添加该 **MCP Server URL**。具体菜单名称随账号版本变化；选择可填写自定义 MCP URL 的入口。
+3. 发起连接时，浏览器应出现 **Cloudflare Access → 登录/授权**。用你的允许邮箱完成认证，这一步不输入 Apple 密码。
+4. 返回 ChatGPT，先测试 `icloud_status` 或查询一个简单的只读工具（例如 `get_reminder_lists`）。如果新增了服务端工具，客户端可能需要刷新工具列表。
+
+**排错：** 如果提示 OAuth redirect URI 不允许，核对第 4 步的完整 `https://chatgpt.com/connector/oauth/*`；如果管理页可以进、MCP 连接失败，检查 Access 是否保护了整站并启用 Managed OAuth。如果返回 `CONFIGURATION_REQUIRED` 或 403，再核对 `TEAM_DOMAIN` 和 `POLICY_AUD`。
+
+## 部署成功检查表
+
+- [ ] Fork 已关联 Workers Builds，`main` 有成功构建日志
+- [ ] Worker 的 `DB` D1 数据库已创建/绑定，初始化没有 SQL 错误
+- [ ] 自定义 HTTPS 子域名可以访问，并由 Access 要求登录
+- [ ] Access Allow 策略只允许自己的身份，Managed OAuth 已开启
+- [ ] Allowed redirect URIs 包含 `https://chatgpt.com/connector/oauth/*`
+- [ ] 两个 Text 变量与一个 Secret 均设置在 Worker **运行时**
+- [ ] 管理页已保存所需类型的 Apple 凭证
+- [ ] 已启用并**逐项检查**需要的服务（写权限按需启用）
+- [ ] ChatGPT 已连接 MCP，`icloud_status` 和一个只读工具正常工作
+
+## 常见问题
+
+| 现象 | 应优先检查 |
+| --- | --- |
+| Build 报 Worker 名称不匹配 | Cloudflare Worker 名和 `wrangler.toml` 的 `name` 是否一致 |
+| D1/`DB` 不存在，SQL 执行失败 | 构建日志中的数据库创建/绑定权限、`wrangler.toml` 绑定名是否为 `DB`、部署命令是否为 `npm run deploy:cloud` |
+| 打开管理页出现 503 / 配置错误 | `TEAM_DOMAIN`、`POLICY_AUD`、`ENCRYPTION_KEYS_JSON` 是否设置在运行时，域名/Access AUD 是否准确 |
+| 管理页没有弹出 Access 登录 | 整个自定义域名是否由正确的 Access 应用保护，是否存在 Bypass |
+| MCP OAuth 失败 / 回调被拒 | Managed OAuth 是否开启，Allowed redirect URIs 是否包含正确的 ChatGPT 回调模式 |
+| 网页服务显示 `REAUTH_REQUIRED` | 读取管理页错误详情，仅对需要的服务重新验证；不要先删除所有凭证 |
+| 日历/通讯录不通 | App 专用密码是否有效、账号是否正确、服务是否启用并检查 |
+| 密钥更新后凭证全失效 | 是否更换了旧 `ENCRYPTION_KEYS_JSON` 或切换了 D1（需恢复原密钥和原库） |
+| 照片缩略图在 ChatGPT 不显示 | MCP 图片返回与客户端内联展示是两回事；先核对工具错误与客户端支持 |
+
+## 可选：命令行部署（高级用户）
+
+本项目**不要求**普通用户执行下面步骤。只有需要本地验证或自行管理 Wrangler 时才使用 Node.js 24+：
 
 ```bash
+git clone https://github.com/happy2first/icloud-mcp-worker.git
+cd icloud-mcp-worker
 npm ci
 npm run check
 npx wrangler login
@@ -14,87 +195,14 @@ npx wrangler d1 create icloud-mcp-worker
 cp wrangler.toml wrangler.local.toml
 ```
 
-以上创建数据库步骤仅用于首次部署。已有部署保留原数据库，不删库重建。将返回的 database_id 填入已忽略的 wrangler.local.toml，绑定名保持 DB；在文件顶层配置自己的 custom_domain 路由。
-
-在 Cloudflare Access 为整个域名建立应用，仅允许本人或明确授权的身份。记录该应用 AUD，开启 [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)。不要留下绕过 Access 的公开管理/MCP入口。
-
-| 配置                 | 类型     | 值                                               |
-| -------------------- | -------- | ------------------------------------------------ |
-| TEAM_DOMAIN          | 普通变量 | 完整 https://your-team.cloudflareaccess.com 地址 |
-| POLICY_AUD           | 普通变量 | 保护该域名的 Access 应用 AUD                     |
-| ENCRYPTION_KEYS_JSON | Secret   | 32 字节随机密钥的标准 Base64，不加 JSON/引号     |
-
-普通变量放 Dashboard 或本地 [vars]；仓库 keep_vars=true 保留 Dashboard 变量。密钥名称为兼容旧版本保留，不是要求 JSON。旧格式仍兼容，更新时不要更换密钥。
+把创建 D1 时得到的真实 `database_id` 填入**已被 Git 忽略**的 `wrangler.local.toml`，绑定名保持 `DB`；顶层添加域名路由 `routes = [{ pattern = "icloud.example.com", custom_domain = true }]`，并配置同样的 Access 运行时变量。生成 Secret 之后继续：
 
 ```bash
-openssl rand -base64 32
 npx wrangler secret put ENCRYPTION_KEYS_JSON --config wrangler.local.toml
 npx wrangler d1 execute DB --remote --file schema.sql --config wrangler.local.toml
 npx wrangler deploy --config wrangler.local.toml
 ```
 
-只在首次部署生成新密钥。已有密文必须沿用原密钥，Apple 密码不属于环境变量。
+**不要把个人环境配置、Secret、数据库导出或 Apple 凭证提交到 Fork。** 已有部署请复用原库与原密钥。代码更新后，Cloudflare GitHub 集成会自动监听已连接分支并重新部署。
 
-### 1.1 Cloudflare Workers Builds：从 GitHub 部署
-
-关联仓库，构建命令用 npm run build，部署命令用 npm run deploy:cloud。云端配置同样的变量、Secret和自定义域名，本地被忽略的配置不会上传。
-
-Wrangler 按 database_name 复用或创建 D1，部署脚本应用初始 schema；若已有数据库名称不同，显式绑定正确的 database_id。不要使用占位 UUID。首次 Access 验证后的 API 请求也会初始化缺失的表，不会删除已有数据或擅自迁移不兼容结构。
-
-workers.dev 和预览地址默认关闭。Apple 登录及会话恢复默认开启，需要暂停才设 APPLE_LOGIN_ENABLED=false / APPLE_SESSION_RENEWAL_ENABLED=false。服务开关和写权限保存在 D1；普通更新保留数据库、密钥、Access配置和 Dashboard变量。
-
-## 2. 两类凭证
-
-| 凭证               | 用途                               | 流程                                |
-| ------------------ | ---------------------------------- | ----------------------------------- |
-| Apple 网页会话     | 提醒事项、备忘录、照片、云盘、查找 | 管理页 Apple 登录及按需可信设备验证 |
-| Apple App 专用密码 | 日历、通讯录                       | Apple 账户页生成，管理页加密保存    |
-
-管理页浏览器用主密码计算 SRP 证明，Worker 不接收或保存主密码。会话 Cookie/Token 与 App 专用密码加密存入 D1，按验证后的 Access 身份隔离。部署页面属于你自己的非官方应用，需要信任其源码和部署。
-
-网页版数据访问应在 Apple 设置中允许。本项目真实测试使用高级数据保护关闭场景，开启后未验证。中国大陆（云上贵州）账户选择大陆区，国际账户选择国际区；该区域随会话保存，DAV集合通过发现获取。
-
-## 3. 登录和检查服务
-
-1. 打开自己的 /admin，通过 Access 登录。
-2. 在「凭证管理」登录 Apple，选择对应区域。已有凭证默认收起，需更新时展开流程。
-3. 按 Apple 要求在可信设备批准，填写页面上的六位验证码。完成后返回管理页，查看网页凭证是否已保存。
-4. 在需要的服务卡片启用服务，先保持写权限关闭，点「检查连接」。
-5. 只有 Apple 要求时才继续设备批准/数据访问验证。按提示等待后检查，不连续提交，不因某项失败清掉其他凭证。
-6. 查找若要求额外验证，使用其卡片上的验证入口；若已连接，不需再验证。App 专用密码无法替代查找网页会话。
-7. 从 [Apple 账户页](https://account.apple.com/) 生成 App 专用密码，为日历/通讯录凭证填写账号及密码并保存，再分别检查连接。
-
-主密码与 App 专用密码不能互换。[Apple 专用密码说明](https://support.apple.com/en-us/102654)介绍其生成及撤销方式。移除本地凭证只删除本项目保存的信息，不删除 Apple 内容，也不撤销 Apple 网站上的密码。
-
-新网页会话无本地保留期限，直到主动断开或 Apple 撤销；这不代表永久可用。刷新页面读取保存状态和上次服务检查结果，不向 Apple 重新验证。连接正常附有检查时间，只代表该次请求成功。
-
-## 4. 连接 MCP 客户端
-
-从首屏复制按实际部署域名生成的 MCP 地址，添加到支持远程 MCP与 OAuth的客户端，不限于 ChatGPT。OAuth授权进入你的 MCP服务，Apple凭证仍只在管理页录入。根据 Access Managed OAuth配置允许客户端实际要求的准确回调地址，不使用宽泛通配符放松保护。
-
-先调用 icloud_status，再读取各服务。提醒事项可先用 get_reminder_lists 获取真实列表ID，再用 get_reminders 或 get_all_open_reminders。管理页的凭证已保存不代表所有工具都已通过验证；逐项检查所需操作。
-
-服务端更新工具后，客户端可能需要刷新工具列表。完整能力和工具入口见 [README.md](../README.md#功能)。
-
-## 5. 写入、循环提醒和查找
-
-只有明确需要写入时，才开启相应服务的「允许新增与修改」。创建复用同一个 idempotencyKey；修改使用当前 recordChangeTag或 ETag，变更对象先读后写。
-
-支持的简单定时日/周循环只完成当前一期：创建本次完成记录，原ID仍代表未完成的下一期，循环规则保留。完成返回 record（已完成历史）和 nextOccurrence（下一期）。不能把下一期的新版本当成上一期的重试。复杂循环或子任务等未支持形态会明确拒绝。
-
-查找读取的是本人及有权限访问的家庭设备，不是朋友位置。refresh=false读最后报告位置；刷新被接受不代表已有新位置。播放声音需要用户确认指定设备，再传 confirmed=true，不自动重试。没有丢失模式、抹除或公开删除工具。
-
-## 6. 文件和错误
-
-缩略图以 MCP图片返回，显示方式取决于客户端。下载返回 Access受保护临时链接和 icloud-file://资源，不公开 Apple签名URL。资源读取上限5MiB，HTTP下载上限100MiB/60秒，临时票据最多5分钟，受服务权限和会话代次约束。
-
-操作结果、错误详情和技术状态都有复制入口。提交公开问题前先脱敏技术状态，保留工具名、错误码、请求编号、时间及必要参数即可。
-
-- REAUTH_REQUIRED：看服务详情，网页会话重新验证或 DAV替换专用密码。
-- DEVICE_APPROVAL_PENDING / VERIFICATION_REQUIRED：按页面提示批准/验证，不连续重试。
-- RATE_LIMITED / UPSTREAM_UNAVAILABLE：等待指定时间或检查网络，不盲目重发写入。
-- CONFLICT：读取当前对象和版本，再决定下一步。
-- WRITE_OUTCOME_UNKNOWN：先核对原ID及详情中的完成记录ID，不自动换ID、刷新版本或强制覆盖。
-- UNSUPPORTED_FEATURE / PROTOCOL_CHANGED：核对支持范围及项目更新，不绕过校验。
-
-[安全说明](../SECURITY.md) · [验证记录](VALIDATION.md) · [协议及验收清单](PROTOCOL-AND-ACCEPTANCE.md)
+更进一步：[英文 README](../README.en.md) · [安全说明](../SECURITY.md) · [错误与验证记录](VALIDATION.md) · [Cloudflare Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
