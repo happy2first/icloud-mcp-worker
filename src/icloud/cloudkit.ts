@@ -442,7 +442,7 @@ function dateField(record: CloudKitRecord, key: string): string | null {
   return date.toISOString();
 }
 
-function referenceField(
+export function referenceField(
   record: CloudKitRecord,
   key: string,
   type: string,
@@ -1217,6 +1217,81 @@ export class CloudKitRemindersClient {
     return result;
   }
 
+  async modifyOccurrence(
+    operations: import("../reminders/recurring-completion.ts").OccurrenceOperation[],
+  ) {
+    requireInput(
+      this.owner !== undefined && operations.length === 10,
+      "Recurring completion requires one bounded owned atomic plan.",
+    );
+    const names = new Set<string>();
+    for (const op of operations) {
+      requestedRecordName(op.record.recordName, [
+        "List",
+        "Reminder",
+        "Alarm",
+        "AlarmTrigger",
+        "RecurrenceRule",
+      ]);
+      requireInput(
+        !names.has(op.record.recordName) &&
+          op.record.recordName.startsWith(op.record.recordType + "/"),
+        "Occurrence participants must be unique typed records.",
+      );
+      names.add(op.record.recordName);
+      requireInput(
+        op.operationType === "create"
+          ? op.record.recordChangeTag === undefined
+          : !!op.record.recordChangeTag,
+        "Occurrence participants require exact optimistic versions.",
+      );
+      requireInput(
+        op.operationType !== "delete" ||
+          ["Alarm", "AlarmTrigger"].includes(op.record.recordType),
+        "Only the validated old date pair may be retired.",
+      );
+    }
+    const payload = { zoneID: this.requestZone, atomic: true, operations };
+    requireInput(
+      new TextEncoder().encode(JSON.stringify(payload)).length <=
+        MAX_REQUEST_BYTES,
+      "The occurrence exceeds its atomic byte budget.",
+    );
+    const result = await this.post("/records/modify", payload);
+    const page = pageRecords(
+      result.records,
+      operations.length,
+      MAX_PAGE_SIZE,
+      this.expectedOwner,
+    );
+    if (page.recordErrors.length) {
+      const error = page.recordErrors[0];
+      parseTopLevelError(
+        {
+          serverErrorCode: error.serverErrorCode,
+          recordName: error.recordName,
+        },
+        {
+          path: "/records/modify",
+          upstreamStatus: 200,
+          hasSessionCookie: true,
+        },
+      );
+    }
+    const retained = operations
+      .filter((o) => o.operationType !== "delete")
+      .map((o) => o.record.recordName);
+    const checked = await this.lookup(retained);
+    requireInput(
+      checked.recordErrors.length === 0 &&
+        checked.unresolvedRecordNames.length === 0,
+      "Apple omitted the occurrence read-back.",
+    );
+    return checked.records.filter(
+      (r): r is CloudKitRecord => "recordType" in r && !r.deleted,
+    );
+  }
+
   async modifyReminder(
     operationType: "create" | "update",
     record: CloudKitWriteRecord,
@@ -1518,7 +1593,13 @@ export class CloudKitRemindersClient {
       "The CloudKit lookup size is outside the supported limit.",
     );
     const requestedRecordNames = recordNames.map((name) =>
-      requestedRecordName(name, ["List", "Reminder"]),
+      requestedRecordName(name, [
+        "List",
+        "Reminder",
+        "Alarm",
+        "AlarmTrigger",
+        "RecurrenceRule",
+      ]),
     );
     requireInput(
       !listSummary ||

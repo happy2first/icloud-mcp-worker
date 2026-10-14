@@ -181,6 +181,9 @@ export function MutationOutput(
           "True for an identical create reconciled from the existing item without another Apple write.",
         ),
       record: ReminderOutput,
+      nextOccurrence: ReminderOutput.optional().describe(
+        "For recurring completion, record is the completed occurrence and nextOccurrence is the still-open recurring root.",
+      ),
       writesEnabled: z.literal(true),
     })
     .strict();

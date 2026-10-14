@@ -265,7 +265,7 @@ function newResolutionToken(modificationTime: number): {
   };
 }
 
-function createResolutionTokenMap(
+export function createResolutionTokenMap(
   fieldNames: readonly string[],
   nowMs: number,
 ): string {
@@ -350,7 +350,7 @@ function existingResolutionMap(
   return map;
 }
 
-function updateResolutionTokenMap(
+export function updateResolutionTokenMap(
   current: CloudKitRecord,
   fieldNames: readonly string[],
   nowMs: number,

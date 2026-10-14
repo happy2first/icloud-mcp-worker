@@ -29,6 +29,10 @@ import {
   type CloudKitWriteRecord,
 } from "../reminders/writes.ts";
 import { decodeDocument } from "../reminders/crdt.ts";
+import {
+  planRecurringCompletion,
+  verifyOccurrence,
+} from "../reminders/recurring-completion.ts";
 import { AppleAuthHTTP } from "./apple/http.ts";
 import { advancePcs, freshPcsCheckpoint } from "./apple/pcs.ts";
 import {
@@ -609,6 +613,79 @@ export class AppleConnectionService {
           let write: CloudKitWriteRecord;
           let confirmed: CloudKitRecord;
           let replayed = false;
+          if (
+            input.action === "complete" &&
+            current &&
+            (normalizeReminder(current, owner).recurrenceRuleIds?.length ?? 0) >
+              0
+          ) {
+            const r = normalizeReminder(current, owner);
+            if (r.recurrenceRuleIds?.length !== 1 || r.alarmIds?.length !== 1)
+              throw new AppError(
+                "UNSUPPORTED_FEATURE",
+                "This recurring completion requires one recurrence and one absolute date alarm.",
+              );
+            const related = await client.lookup([
+              r.recurrenceRuleIds[0],
+              r.alarmIds[0],
+            ]);
+            const rule = writeLookupRecord(
+              related,
+              r.recurrenceRuleIds[0],
+              false,
+            )!;
+            const alarm = writeLookupRecord(related, r.alarmIds[0], false)!;
+            const id = (alarm.fields.TriggerID as { value?: unknown })?.value;
+            if (typeof id !== "string")
+              throw new AppError(
+                "PROTOCOL_CHANGED",
+                "The recurring alarm omitted its trigger identity.",
+              );
+            const triggerId = id.startsWith("AlarmTrigger/")
+              ? id
+              : `AlarmTrigger/${id}`;
+            const triggers = await client.lookup([triggerId]);
+            const trigger = writeLookupRecord(triggers, triggerId, false)!;
+            const plan = planRecurringCompletion(
+              input,
+              current,
+              list,
+              rule,
+              alarm,
+              trigger,
+              owner,
+            );
+            await repository.assertWriteLease(fence);
+            stage.dispatch();
+            applied = true; // Atomic dispatch may already have committed if confirmation is lost.
+            const records = await client.modifyOccurrence(plan.operations);
+            const active = verifyOccurrence(plan, records, owner);
+            stage.confirm();
+            applied = true;
+            const history = records.find(
+              (r) => r.recordName === plan.historyId,
+            )!;
+            await repository.commitResume(
+              fence,
+              appleSuccess({
+                ...omitField(saved.session, "allOpenScan"),
+                connection,
+                auth: http.snapshot(),
+              }),
+              "READY",
+            );
+            return {
+              generation: fence.generation,
+              operation: "complete" as const,
+              replayed: false,
+              record: omitField(normalizeReminder(history, owner), "raw"),
+              writesEnabled: true as const,
+              nextOccurrence: omitField(
+                normalizeReminder(active, owner),
+                "raw",
+              ),
+            };
+          }
           if (input.action === "create") {
             const create = omitField(
               omitField(input, "action"),
