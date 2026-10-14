@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="725" viewBox="0 0 1120 725" role="img" aria-label="iCloud MCP 管理页操作示意图">
+<rect width="1120" height="725" fill="#f3f5fa"/><rect x="40" y="25" width="1040" height="668" rx="18" fill="#fff" stroke="#dbe0ea"/>
+<text x="72" y="67" font-family="Arial,sans-serif" font-size="29" font-weight="700" fill="#1b2233">iCloud MCP</text><text x="73" y="93" font-family="Arial,sans-serif" font-size="16" fill="#526078">凭证与服务管理</text>
+<rect x="900" y="48" width="145" height="38" rx="8" fill="#eef2f8"/><text x="916" y="72" font-family="Arial,sans-serif" font-size="14" fill="#22518f">刷新页面状态</text>
+<rect x="71" y="111" width="978" height="66" rx="12" fill="#f8faff" stroke="#cfd9e9"/>
+<text x="90" y="151" font-family="Arial,sans-serif" font-size="16" fill="#526078">① MCP 地址</text><rect x="222" y="123" width="684" height="40" rx="8" fill="#fff" stroke="#dbe0ea"/>
+<text x="239" y="149" font-family="monospace" font-size="17" fill="#164c8d">https://icloud.example.com/mcp</text><rect x="921" y="126" width="111" height="35" rx="8" fill="#1762d9"/><text x="945" y="149" font-family="Arial,sans-serif" font-size="14" fill="#fff">复制</text>
+<text x="73" y="222" font-family="Arial,sans-serif" font-size="23" font-weight="700" fill="#1b2233">② 凭证管理</text><text x="823" y="219" font-family="Arial,sans-serif" font-size="13" fill="#64748b">保存不等于检查通过</text>
+<rect x="71" y="240" width="475" height="204" rx="15" fill="#fff" stroke="#d3dce9"/><rect x="562" y="240" width="487" height="204" rx="15" fill="#fff" stroke="#d3dce9"/>
+<text x="92" y="282" font-family="Arial,sans-serif" font-size="21" font-weight="600" fill="#1b2233">Apple 网页登录</text><text x="584" y="282" font-family="Arial,sans-serif" font-size="21" font-weight="600" fill="#1b2233">App 专用密码</text>
+<rect x="434" y="260" width="91" height="30" rx="7" fill="#fff0dc"/><text x="451" y="281" font-family="Arial,sans-serif" font-size="14" fill="#946014">未保存</text>
+<rect x="951" y="260" width="80" height="30" rx="7" fill="#fff0dc"/><text x="961" y="281" font-family="Arial,sans-serif" font-size="14" fill="#946014">未保存</text>
+<text x="93" y="320" font-family="Arial,sans-serif" font-size="16" fill="#526078">提醒事项、备忘录、照片、云盘、查找</text><text x="584" y="320" font-family="Arial,sans-serif" font-size="16" fill="#526078">日历、通讯录</text>
+<rect x="90" y="355" width="206" height="56" rx="10" fill="#1762d9"/><text x="135" y="390" font-family="Arial,sans-serif" font-size="18" font-weight="600" fill="#fff">③ 登录 Apple</text>
+<rect x="584" y="347" width="205" height="40" rx="7" fill="#f4f7fb" stroke="#c9d3e4"/><text x="595" y="373" font-family="Arial,sans-serif" font-size="15" fill="#506079">Apple 账户邮箱</text>
+<rect x="800" y="347" width="226" height="40" rx="7" fill="#f4f7fb" stroke="#c9d3e4"/><text x="811" y="373" font-family="Arial,sans-serif" font-size="15" fill="#506079">xxxx-xxxx-xxxx-xxxx</text>
+<rect x="583" y="399" width="134" height="31" rx="8" fill="#1762d9"/><text x="625" y="421" font-family="Arial,sans-serif" font-size="15" fill="#fff">④ 保存</text>
+<text x="73" y="494" font-family="Arial,sans-serif" font-size="23" font-weight="700" fill="#1b2233">⑤ 服务连接</text><text x="790" y="491" font-family="Arial,sans-serif" font-size="13" fill="#64748b">先启用 → 检查连接 → 按需验证</text>
+<rect x="71" y="514" width="475" height="129" rx="15" fill="#f8faff" stroke="#d3dce9"/><rect x="562" y="514" width="487" height="129" rx="15" fill="#f8faff" stroke="#d3dce9"/>
+<text x="93" y="550" font-family="Arial,sans-serif" font-size="20" font-weight="600" fill="#1b2233">提醒事项</text><text x="584" y="550" font-family="Arial,sans-serif" font-size="20" font-weight="600" fill="#1b2233">日历</text>
+<text x="93" y="578" font-family="Arial,sans-serif" font-size="14" fill="#667085">状态：尚未检查</text><text x="584" y="578" font-family="Arial,sans-serif" font-size="14" fill="#667085">状态：尚未检查</text>
+<rect x="93" y="594" width="152" height="34" rx="8" fill="#1762d9"/><text x="122" y="617" font-family="Arial,sans-serif" font-size="15" fill="#fff">检查连接</text><rect x="583" y="594" width="152" height="34" rx="8" fill="#1762d9"/><text x="611" y="617" font-family="Arial,sans-serif" font-size="15" fill="#fff">检查连接</text>
+<text x="73" y="675" font-family="Arial,sans-serif" font-size="14" fill="#8a94a5">界面示意 · 基于仓库管理页字段绘制，非真实账户截图；页面布局以实际部署版本为准。</text></svg>
